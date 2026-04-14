@@ -62,7 +62,9 @@ const upload = multer({
 
 const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,created_at';
 const USER_SELECT_WITH_PASSWORD = `${USER_SELECT},password,password_hash`;
-const MINISTRY_SELECT = 'id,name,leader_id,managers,member_count,color,image_url,functions,created_at';
+const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,functions,created_at';
+const MINISTRY_SELECT_WITH_TEAMS = `${MINISTRY_SELECT_BASE},teams`;
+let supportsMinistryTeamsColumn = true;
 
 function asyncHandler(handler) {
   return (req, res, next) => {
@@ -120,6 +122,80 @@ function mapLeader(row) {
   };
 }
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function mapMinistryTeam(team) {
+  if (!team || typeof team !== 'object') return null;
+
+  const id = String(team.id || '').trim();
+  const name = String(team.name || '').trim();
+  const memberIds = normalizeStringArray(team.memberIds);
+
+  if (!id || !name) return null;
+
+  return {
+    id,
+    name,
+    memberIds,
+  };
+}
+
+function sanitizeMinistryTeams(value) {
+  let rawValue = value;
+
+  if (typeof rawValue === 'string') {
+    try {
+      rawValue = JSON.parse(rawValue);
+    } catch {
+      rawValue = [];
+    }
+  }
+
+  if (!Array.isArray(rawValue)) return [];
+  return rawValue.map(mapMinistryTeam).filter(Boolean);
+}
+
+function isMissingMinistryTeamsColumnError(error) {
+  if (!error) return false;
+  const message = String(error.message || '');
+  if (error.code === '42703') return true;
+  return /column\s+ministries\.teams\s+does not exist/i.test(message)
+    || /column\s+teams\s+does not exist/i.test(message);
+}
+
+async function runMinistryQueryWithFallback(queryFactory) {
+  const preferredSelect = supportsMinistryTeamsColumn ? MINISTRY_SELECT_WITH_TEAMS : MINISTRY_SELECT_BASE;
+  let result = await queryFactory(preferredSelect);
+
+  if (supportsMinistryTeamsColumn && isMissingMinistryTeamsColumnError(result.error)) {
+    supportsMinistryTeamsColumn = false;
+    result = await queryFactory(MINISTRY_SELECT_BASE);
+  }
+
+  return result;
+}
+
+async function updateMinistryTeamsSafely(ministryId, teams) {
+  if (!supportsMinistryTeamsColumn) return;
+
+  const { error } = await supabase
+    .from('ministries')
+    .update({ teams })
+    .eq('id', ministryId);
+
+  if (isMissingMinistryTeamsColumnError(error)) {
+    supportsMinistryTeamsColumn = false;
+    return;
+  }
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 function mapMinistry(row) {
   return {
     id: row.id,
@@ -129,10 +205,12 @@ function mapMinistry(row) {
     managers: Array.isArray(row.managers) ? row.managers : [],
     managerUsers: Array.isArray(row.manager_users) ? row.manager_users : [],
     memberUserIds: Array.isArray(row.member_user_ids) ? row.member_user_ids : [],
+    memberUsers: Array.isArray(row.member_users) ? row.member_users : [],
     memberCount: Number.isFinite(row.member_count) ? row.member_count : 0,
     color: row.color || '#ffffff',
     imageUrl: row.image_url || null,
     functions: Array.isArray(row.functions) ? row.functions : [],
+    teams: sanitizeMinistryTeams(row.teams),
     createdAt: row.created_at,
   };
 }
@@ -143,10 +221,55 @@ function isLeaderEligible(user) {
   return user.role === 'lider' && user.is_approved;
 }
 
-function canCreateMinistry(user) {
+async function canCreateMinistry(user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  return user.role === 'lider' && user.is_approved;
+  if (!(user.role === 'lider' && user.is_approved)) return false;
+
+  const { data: createdMinistries, error: createdError } = await supabase
+    .from('ministries')
+    .select('id')
+    .eq('leader_id', user.id)
+    .limit(1);
+
+  if (createdError) {
+    throw new Error(createdError.message);
+  }
+
+  if ((createdMinistries || []).length > 0) {
+    return true;
+  }
+
+  const { data: managedMinistries, error: managedError } = await supabase
+    .from('ministries')
+    .select('id,managers');
+
+  if (managedError) {
+    throw new Error(managedError.message);
+  }
+
+  const isManagerInAnyMinistry = (managedMinistries || []).some((ministry) => {
+    if (Array.isArray(ministry.managers)) {
+      return ministry.managers.includes(user.id);
+    }
+
+    if (typeof ministry.managers === 'string') {
+      try {
+        const parsed = JSON.parse(ministry.managers);
+        return Array.isArray(parsed) && parsed.includes(user.id);
+      } catch {
+        return false;
+      }
+    }
+
+    return false;
+  });
+
+  if (isManagerInAnyMinistry) {
+    return false;
+  }
+
+  return true;
 }
 
 function canManageMinistry(actor, ministry) {
@@ -155,6 +278,16 @@ function canManageMinistry(actor, ministry) {
   if (ministry.leader_id === actor.id) return true;
   const managers = Array.isArray(ministry.managers) ? ministry.managers : [];
   return managers.includes(actor.id);
+}
+
+function syncTeamsWithMemberIds(teams, validMemberIds) {
+  const validIds = new Set(normalizeStringArray(validMemberIds));
+  return sanitizeMinistryTeams(teams)
+    .map((team) => ({
+      ...team,
+      memberIds: team.memberIds.filter((memberId) => validIds.has(memberId)),
+    }))
+    .filter((team) => team.memberIds.length > 0);
 }
 
 async function getUserById(userId) {
@@ -210,12 +343,32 @@ async function enrichMinistries(rows) {
       .filter(Boolean)
   )];
   const membershipMap = new Map();
+  const memberIds = new Set();
 
   if (ministryIds.length > 0) {
-    const { data: memberships, error: membershipError } = await supabase
+    let memberships = null;
+    let membershipError = null;
+
+    const withRoleResponse = await supabase
       .from('ministry_members')
-      .select('ministry_id,user_id')
+      .select('ministry_id,user_id,function_name')
       .in('ministry_id', ministryIds);
+
+    memberships = withRoleResponse.data;
+    membershipError = withRoleResponse.error;
+
+    if (membershipError && membershipError.code === '42703') {
+      const fallbackResponse = await supabase
+        .from('ministry_members')
+        .select('ministry_id,user_id')
+        .in('ministry_id', ministryIds);
+
+      memberships = (fallbackResponse.data || []).map((item) => ({
+        ...item,
+        function_name: 'Membro',
+      }));
+      membershipError = fallbackResponse.error;
+    }
 
     if (membershipError && membershipError.code !== '42P01') {
       throw new Error(membershipError.message);
@@ -225,15 +378,17 @@ async function enrichMinistries(rows) {
       for (const membership of memberships || []) {
         const ministryId = membership.ministry_id;
         const userId = membership.user_id;
+        const functionName = String(membership.function_name || 'Membro').trim() || 'Membro';
         if (!membershipMap.has(ministryId)) {
-          membershipMap.set(ministryId, new Set());
+          membershipMap.set(ministryId, []);
         }
-        membershipMap.get(ministryId).add(userId);
+        membershipMap.get(ministryId).push({ user_id: userId, function_name: functionName });
+        memberIds.add(userId);
       }
     }
   }
 
-  const userIds = [...new Set([...leaderIds, ...managerIds])];
+  const userIds = [...new Set([...leaderIds, ...managerIds, ...memberIds])];
 
   let userMap = new Map();
   if (userIds.length > 0) {
@@ -255,7 +410,19 @@ async function enrichMinistries(rows) {
       .map((managerId) => userMap.get(managerId))
       .map(mapLeader)
       .filter(Boolean);
-    const memberUserIds = Array.from(membershipMap.get(row.id) || []);
+    const memberships = membershipMap.get(row.id) || [];
+    const memberUsers = memberships
+      .map((membership) => {
+        const user = userMap.get(membership.user_id);
+        if (!user || isGhostUser(user)) return null;
+        return {
+          id: user.id,
+          name: user.name || user.full_name,
+          functionName: membership.function_name || 'Membro',
+        };
+      })
+      .filter(Boolean);
+    const memberUserIds = memberUsers.map((member) => member.id);
 
     const leader = userMap.get(row.leader_id);
     const leaderName = leader && !isGhostUser(leader)
@@ -266,6 +433,7 @@ async function enrichMinistries(rows) {
       ...row,
       leader_name: leaderName,
       manager_users: managerUsers,
+      member_users: memberUsers,
       member_user_ids: memberUserIds,
       member_count: memberUserIds.length,
     };
@@ -273,11 +441,13 @@ async function enrichMinistries(rows) {
 }
 
 async function getMinistryById(ministryId) {
-  const { data, error } = await supabase
-    .from('ministries')
-    .select(MINISTRY_SELECT)
-    .eq('id', ministryId)
-    .maybeSingle();
+  const { data, error } = await runMinistryQueryWithFallback((selectFields) => (
+    supabase
+      .from('ministries')
+      .select(selectFields)
+      .eq('id', ministryId)
+      .maybeSingle()
+  ));
 
   if (error) {
     throw new Error(error.message);
@@ -424,17 +594,21 @@ app.get('/api/users/birthdays', asyncHandler(async (req, res) => {
 
 app.get('/api/users/leaders', asyncHandler(async (req, res) => {
   const search = String(req.query.search || '').trim();
+  const excludeUserId = String(req.query.excludeUserId || '').trim();
 
   let leaderQuery = supabase
     .from('users')
     .select(USER_SELECT)
-    .eq('role', 'lider')
-    .eq('is_approved', true)
+    .neq('role', 'admin')
     .order('name', { ascending: true });
 
   if (search) {
     const pattern = `%${search}%`;
     leaderQuery = leaderQuery.or(`name.ilike.${pattern},full_name.ilike.${pattern},email.ilike.${pattern}`);
+  }
+
+  if (excludeUserId) {
+    leaderQuery = leaderQuery.neq('id', excludeUserId);
   }
 
   const { data, error } = await leaderQuery;
@@ -443,7 +617,9 @@ app.get('/api/users/leaders', asyncHandler(async (req, res) => {
     throw new Error(error.message);
   }
 
-  const leaders = (data || []).map(mapUser);
+  const leaders = (data || [])
+    .map(mapUser)
+    .filter((candidate) => candidate.role === 'membro' || (candidate.role === 'lider' && candidate.isApproved));
 
   return res.json({ users: leaders });
 }));
@@ -556,10 +732,12 @@ app.delete('/api/users/:id/reject', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/ministries', asyncHandler(async (_req, res) => {
-  const { data, error } = await supabase
-    .from('ministries')
-    .select(MINISTRY_SELECT)
-    .order('created_at', { ascending: false });
+  const { data, error } = await runMinistryQueryWithFallback((selectFields) => (
+    supabase
+      .from('ministries')
+      .select(selectFields)
+      .order('created_at', { ascending: false })
+  ));
 
   if (error) {
     throw new Error(error.message);
@@ -572,11 +750,13 @@ app.get('/api/ministries', asyncHandler(async (_req, res) => {
 app.get('/api/ministries/created-by/:leaderId', asyncHandler(async (req, res) => {
   const { leaderId } = req.params;
 
-  const { data, error } = await supabase
-    .from('ministries')
-    .select(MINISTRY_SELECT)
-    .eq('leader_id', leaderId)
-    .order('created_at', { ascending: false });
+  const { data, error } = await runMinistryQueryWithFallback((selectFields) => (
+    supabase
+      .from('ministries')
+      .select(selectFields)
+      .eq('leader_id', leaderId)
+      .order('created_at', { ascending: false })
+  ));
 
   if (error) {
     throw new Error(error.message);
@@ -623,7 +803,7 @@ app.post('/api/ministries', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Usuario responsavel nao encontrado.' });
   }
 
-  if (!canCreateMinistry(actor)) {
+  if (!(await canCreateMinistry(actor))) {
     return res.status(403).json({ message: 'Usuario sem permissao para criar ministerio.' });
   }
 
@@ -654,11 +834,27 @@ app.post('/api/ministries', asyncHandler(async (req, res) => {
     functions: [],
   };
 
-  const { data: created, error } = await supabase
+  let createPayload = payload;
+  if (supportsMinistryTeamsColumn) {
+    createPayload = { ...payload, teams: [] };
+  }
+
+  let createResponse = await supabase
     .from('ministries')
-    .insert(payload)
-    .select(MINISTRY_SELECT)
+    .insert(createPayload)
+    .select(supportsMinistryTeamsColumn ? MINISTRY_SELECT_WITH_TEAMS : MINISTRY_SELECT_BASE)
     .single();
+
+  if (supportsMinistryTeamsColumn && isMissingMinistryTeamsColumnError(createResponse.error)) {
+    supportsMinistryTeamsColumn = false;
+    createResponse = await supabase
+      .from('ministries')
+      .insert(payload)
+      .select(MINISTRY_SELECT_BASE)
+      .single();
+  }
+
+  const { data: created, error } = createResponse;
 
   if (error) {
     throw new Error(error.message);
@@ -743,11 +939,15 @@ app.patch('/api/ministries/:id/leaders', asyncHandler(async (req, res) => {
       throw new Error(candidateError.message);
     }
 
-    const validIds = new Set((candidates || []).filter(isLeaderEligible).map((item) => item.id));
+    const validIds = new Set(
+      (candidates || [])
+        .filter((item) => item.role === 'membro' || (item.role === 'lider' && item.is_approved))
+        .map((item) => item.id)
+    );
     const invalid = uniqueLeaderIds.filter((candidateId) => !validIds.has(candidateId));
 
     if (invalid.length > 0) {
-      return res.status(400).json({ message: 'Alguns lideres informados sao invalidos.' });
+      return res.status(400).json({ message: 'Alguns administradores informados sao invalidos.' });
     }
   }
 
@@ -792,14 +992,14 @@ app.patch('/api/ministries/:id/members', asyncHandler(async (req, res) => {
   if (uniqueMemberIds.length > 0) {
     const { data: existingUsers, error: existingUsersError } = await supabase
       .from('users')
-      .select('id')
+      .select('id,role')
       .in('id', uniqueMemberIds);
 
     if (existingUsersError) {
       throw new Error(existingUsersError.message);
     }
 
-    const validIds = new Set((existingUsers || []).map((item) => item.id));
+    const validIds = new Set((existingUsers || []).filter((item) => item.role !== 'admin').map((item) => item.id));
     if (uniqueMemberIds.some((memberId) => !validIds.has(memberId))) {
       return res.status(400).json({ message: 'Alguns membros informados sao invalidos.' });
     }
@@ -818,6 +1018,7 @@ app.patch('/api/ministries/:id/members', asyncHandler(async (req, res) => {
     const membershipRows = uniqueMemberIds.map((memberId) => ({
       ministry_id: id,
       user_id: memberId,
+      function_name: 'Membro',
     }));
 
     const { error: insertError } = await supabase
@@ -827,6 +1028,227 @@ app.patch('/api/ministries/:id/members', asyncHandler(async (req, res) => {
     if (insertError) {
       throw new Error(insertError.message);
     }
+  }
+
+  const ministryAfterMembers = await getMinistryById(id);
+  const syncedTeams = syncTeamsWithMemberIds(
+    ministryAfterMembers?.teams,
+    ministryAfterMembers?.member_user_ids || []
+  );
+
+  if (JSON.stringify(syncedTeams) !== JSON.stringify(sanitizeMinistryTeams(ministryAfterMembers?.teams))) {
+    await updateMinistryTeamsSafely(id, syncedTeams);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { actorId, userId, functionName } = req.body || {};
+
+  if (!actorId || !userId || !functionName) {
+    return res.status(400).json({ message: 'actorId, userId e functionName sao obrigatorios.' });
+  }
+
+  const normalizedFunction = String(functionName).trim();
+  if (!normalizedFunction) {
+    return res.status(400).json({ message: 'A funcao do membro e obrigatoria.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+  const memberUser = await getUserById(userId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  if (!memberUser || memberUser.role === 'admin') {
+    return res.status(400).json({ message: 'Membro informado e invalido.' });
+  }
+
+  const { error: upsertError } = await supabase
+    .from('ministry_members')
+    .upsert({
+      ministry_id: id,
+      user_id: userId,
+      function_name: normalizedFunction,
+    }, { onConflict: 'ministry_id,user_id' });
+
+  if (upsertError) {
+    throw new Error(upsertError.message);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+app.delete('/api/ministries/:id/members/:userId', asyncHandler(async (req, res) => {
+  const { id, userId } = req.params;
+  const actorId = String(req.query.actorId || '');
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  const { error: deleteError } = await supabase
+    .from('ministry_members')
+    .delete()
+    .eq('ministry_id', id)
+    .eq('user_id', userId);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
+  const ministryAfterDelete = await getMinistryById(id);
+  const syncedTeams = syncTeamsWithMemberIds(
+    ministryAfterDelete?.teams,
+    ministryAfterDelete?.member_user_ids || []
+  );
+
+  if (JSON.stringify(syncedTeams) !== JSON.stringify(sanitizeMinistryTeams(ministryAfterDelete?.teams))) {
+    await updateMinistryTeamsSafely(id, syncedTeams);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+app.post('/api/ministries/:id/teams', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { actorId, name, memberIds } = req.body || {};
+
+  if (!actorId || !name || !Array.isArray(memberIds)) {
+    return res.status(400).json({ message: 'actorId, name e memberIds sao obrigatorios.' });
+  }
+
+  const teamName = String(name).trim();
+  if (!teamName) {
+    return res.status(400).json({ message: 'Nome da equipe e obrigatorio.' });
+  }
+
+  const uniqueMemberIds = normalizeStringArray(memberIds);
+  if (uniqueMemberIds.length === 0) {
+    return res.status(400).json({ message: 'Selecione ao menos um membro para a equipe.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  if (!supportsMinistryTeamsColumn) {
+    return res.status(412).json({
+      message: 'Recurso de equipes indisponivel: execute a migracao SQL para adicionar a coluna ministries.teams.',
+    });
+  }
+
+  const allowedMemberIds = new Set(normalizeStringArray(ministry.member_user_ids));
+  if (uniqueMemberIds.some((memberId) => !allowedMemberIds.has(memberId))) {
+    return res.status(400).json({ message: 'A equipe deve conter apenas membros vinculados ao ministerio.' });
+  }
+
+  const currentTeams = sanitizeMinistryTeams(ministry.teams);
+  if (currentTeams.some((team) => team.name.toLowerCase() === teamName.toLowerCase())) {
+    return res.status(409).json({ message: 'Ja existe uma equipe com esse nome neste ministerio.' });
+  }
+
+  const nextTeams = [...currentTeams, {
+    id: randomUUID(),
+    name: teamName,
+    memberIds: uniqueMemberIds,
+  }];
+
+  const { error: updateError } = await supabase
+    .from('ministries')
+    .update({ teams: nextTeams })
+    .eq('id', id);
+
+  if (isMissingMinistryTeamsColumnError(updateError)) {
+    supportsMinistryTeamsColumn = false;
+    return res.status(412).json({
+      message: 'Recurso de equipes indisponivel: execute a migracao SQL para adicionar a coluna ministries.teams.',
+    });
+  }
+
+  if (updateError) {
+    throw new Error(updateError.message);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(201).json({ ministry: mapMinistry(updated) });
+}));
+
+app.delete('/api/ministries/:id/teams/:teamId', asyncHandler(async (req, res) => {
+  const { id, teamId } = req.params;
+  const actorId = String(req.query.actorId || '');
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  if (!supportsMinistryTeamsColumn) {
+    return res.status(412).json({
+      message: 'Recurso de equipes indisponivel: execute a migracao SQL para adicionar a coluna ministries.teams.',
+    });
+  }
+
+  const currentTeams = sanitizeMinistryTeams(ministry.teams);
+  const nextTeams = currentTeams.filter((team) => team.id !== teamId);
+
+  if (nextTeams.length === currentTeams.length) {
+    return res.status(404).json({ message: 'Equipe nao encontrada.' });
+  }
+
+  const { error: updateError } = await supabase
+    .from('ministries')
+    .update({ teams: nextTeams })
+    .eq('id', id);
+
+  if (isMissingMinistryTeamsColumnError(updateError)) {
+    supportsMinistryTeamsColumn = false;
+    return res.status(412).json({
+      message: 'Recurso de equipes indisponivel: execute a migracao SQL para adicionar a coluna ministries.teams.',
+    });
+  }
+
+  if (updateError) {
+    throw new Error(updateError.message);
   }
 
   const updated = await getMinistryById(id);

@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS ministries (
   color text NOT NULL DEFAULT '#ffffff',
   image_url text,
   functions jsonb NOT NULL DEFAULT '[]'::jsonb,
+  teams jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -133,6 +134,7 @@ ALTER TABLE ministries
   ADD COLUMN IF NOT EXISTS color text DEFAULT '#ffffff',
   ADD COLUMN IF NOT EXISTS image_url text,
   ADD COLUMN IF NOT EXISTS functions jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS teams jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 
 UPDATE ministries
@@ -142,6 +144,10 @@ WHERE managers IS NULL;
 UPDATE ministries
 SET functions = '[]'::jsonb
 WHERE functions IS NULL;
+
+UPDATE ministries
+SET teams = '[]'::jsonb
+WHERE teams IS NULL;
 
 UPDATE ministries
 SET member_count = 0
@@ -165,6 +171,8 @@ ALTER TABLE ministries
   ALTER COLUMN color SET NOT NULL,
   ALTER COLUMN functions SET DEFAULT '[]'::jsonb,
   ALTER COLUMN functions SET NOT NULL,
+  ALTER COLUMN teams SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN teams SET NOT NULL,
   ALTER COLUMN created_at SET DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS ministry_members (
@@ -173,6 +181,17 @@ CREATE TABLE IF NOT EXISTS ministry_members (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (ministry_id, user_id)
 );
+
+ALTER TABLE ministry_members
+  ADD COLUMN IF NOT EXISTS function_name text;
+
+UPDATE ministry_members
+SET function_name = 'Membro'
+WHERE function_name IS NULL OR btrim(function_name) = '';
+
+ALTER TABLE ministry_members
+  ALTER COLUMN function_name SET NOT NULL,
+  ALTER COLUMN function_name SET DEFAULT 'Membro';
 
 CREATE INDEX IF NOT EXISTS idx_ministry_members_user_id ON ministry_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_ministry_members_ministry_id ON ministry_members(ministry_id);
