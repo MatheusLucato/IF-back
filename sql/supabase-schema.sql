@@ -8,6 +8,13 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'theme_preference') THEN
+    CREATE TYPE theme_preference AS ENUM ('light', 'dark');
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
@@ -19,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
   role user_role NOT NULL DEFAULT 'membro',
   is_approved boolean NOT NULL DEFAULT false,
   profile_picture text,
+  theme_preference theme_preference NOT NULL DEFAULT 'light',
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -32,7 +40,12 @@ ALTER TABLE users
   ADD COLUMN IF NOT EXISTS role user_role DEFAULT 'membro',
   ADD COLUMN IF NOT EXISTS is_approved boolean DEFAULT false,
   ADD COLUMN IF NOT EXISTS profile_picture text,
+  ADD COLUMN IF NOT EXISTS theme_preference theme_preference DEFAULT 'light',
   ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
+
+UPDATE users
+SET theme_preference = 'light'
+WHERE theme_preference IS NULL;
 
 DO $$
 BEGIN
@@ -111,6 +124,8 @@ ALTER TABLE users
   ALTER COLUMN role SET NOT NULL,
   ALTER COLUMN is_approved SET DEFAULT false,
   ALTER COLUMN is_approved SET NOT NULL,
+  ALTER COLUMN theme_preference SET DEFAULT 'light',
+  ALTER COLUMN theme_preference SET NOT NULL,
   ALTER COLUMN created_at SET DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS ministries (
@@ -123,6 +138,7 @@ CREATE TABLE IF NOT EXISTS ministries (
   image_url text,
   functions jsonb NOT NULL DEFAULT '[]'::jsonb,
   teams jsonb NOT NULL DEFAULT '[]'::jsonb,
+  repertoire jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -135,6 +151,7 @@ ALTER TABLE ministries
   ADD COLUMN IF NOT EXISTS image_url text,
   ADD COLUMN IF NOT EXISTS functions jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS teams jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS repertoire jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
 
 UPDATE ministries
@@ -148,6 +165,10 @@ WHERE functions IS NULL;
 UPDATE ministries
 SET teams = '[]'::jsonb
 WHERE teams IS NULL;
+
+UPDATE ministries
+SET repertoire = '[]'::jsonb
+WHERE repertoire IS NULL;
 
 UPDATE ministries
 SET member_count = 0
@@ -173,6 +194,8 @@ ALTER TABLE ministries
   ALTER COLUMN functions SET NOT NULL,
   ALTER COLUMN teams SET DEFAULT '[]'::jsonb,
   ALTER COLUMN teams SET NOT NULL,
+  ALTER COLUMN repertoire SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN repertoire SET NOT NULL,
   ALTER COLUMN created_at SET DEFAULT now();
 
 CREATE TABLE IF NOT EXISTS ministry_members (
@@ -185,13 +208,41 @@ CREATE TABLE IF NOT EXISTS ministry_members (
 ALTER TABLE ministry_members
   ADD COLUMN IF NOT EXISTS function_name text;
 
+ALTER TABLE ministry_members
+  ADD COLUMN IF NOT EXISTS function_names jsonb;
+
 UPDATE ministry_members
 SET function_name = 'Membro'
 WHERE function_name IS NULL OR btrim(function_name) = '';
 
+UPDATE ministry_members
+SET function_names = jsonb_build_array(function_name)
+WHERE function_names IS NULL
+  OR jsonb_typeof(function_names) <> 'array'
+  OR jsonb_array_length(function_names) = 0;
+
 ALTER TABLE ministry_members
   ALTER COLUMN function_name SET NOT NULL,
-  ALTER COLUMN function_name SET DEFAULT 'Membro';
+  ALTER COLUMN function_name SET DEFAULT 'Membro',
+  ALTER COLUMN function_names SET NOT NULL,
+  ALTER COLUMN function_names SET DEFAULT '["Membro"]'::jsonb;
+
+CREATE TABLE IF NOT EXISTS repertoire_songs (
+  id text PRIMARY KEY,
+  song jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS ministry_repertoire (
+  ministry_id uuid NOT NULL REFERENCES ministries(id) ON DELETE CASCADE,
+  song_id text NOT NULL REFERENCES repertoire_songs(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (ministry_id, song_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_repertoire_songs_updated_at ON repertoire_songs(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ministry_repertoire_song_id ON ministry_repertoire(song_id);
 
 CREATE INDEX IF NOT EXISTS idx_ministry_members_user_id ON ministry_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_ministry_members_ministry_id ON ministry_members(ministry_id);

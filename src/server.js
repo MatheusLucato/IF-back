@@ -60,9 +60,9 @@ const upload = multer({
   },
 });
 
-const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,created_at';
+const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,theme_preference,created_at';
 const USER_SELECT_WITH_PASSWORD = `${USER_SELECT},password,password_hash`;
-const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,functions,created_at';
+const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,functions,repertoire,created_at';
 const MINISTRY_SELECT_WITH_TEAMS = `${MINISTRY_SELECT_BASE},teams`;
 let supportsMinistryTeamsColumn = true;
 
@@ -107,6 +107,7 @@ function mapUser(row) {
     isApproved: row.is_approved,
     profilePicture: row.profile_picture,
     birthDate: row.birth_date,
+    themePreference: row.theme_preference || 'light',
     createdAt: row.created_at,
   };
 }
@@ -125,6 +126,34 @@ function mapLeader(row) {
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function normalizeFunctionNames(value) {
+  if (Array.isArray(value)) {
+    const normalized = normalizeStringArray(value);
+    return normalized.length > 0 ? normalized : ['Membro'];
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return ['Membro'];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const normalized = normalizeStringArray(parsed);
+        return normalized.length > 0 ? normalized : ['Membro'];
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return ['Membro'];
+}
+
+function functionNamesToString(value) {
+  const names = normalizeFunctionNames(value);
+  return names.join(', ');
 }
 
 function mapMinistryTeam(team) {
@@ -381,6 +410,14 @@ function normalizeOptionalText(value) {
   return normalized || null;
 }
 
+function normalizeThemePreference(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'dark' || normalized === 'light') {
+    return normalized;
+  }
+  return '';
+}
+
 function mapSchedule(row) {
   return {
     id: row.id,
@@ -393,6 +430,15 @@ function mapSchedule(row) {
     musicMinisterName: row.music_minister_name || null,
     songs: normalizeScheduleSongs(row.songs),
   };
+}
+
+function mapStoredSong(row) {
+  if (!row) return null;
+
+  const sourceSong = row.song && typeof row.song === 'object' ? row.song : {};
+  const normalized = normalizeScheduleSong({ id: row.id, ...sourceSong });
+  if (!normalized) return null;
+  return normalized;
 }
 
 function mapMinistry(row) {
@@ -409,6 +455,7 @@ function mapMinistry(row) {
     color: row.color || '#ffffff',
     imageUrl: row.image_url || null,
     functions: Array.isArray(row.functions) ? row.functions : [],
+    repertoire: Array.isArray(row.repertoire) ? row.repertoire : [],
     teams: sanitizeMinistryTeams(row.teams),
     createdAt: row.created_at,
   };
@@ -533,6 +580,20 @@ async function getUserWithPasswordByEmail(email) {
   return data || null;
 }
 
+async function getStoredRepertoireSongById(songId) {
+  const { data, error } = await supabase
+    .from('repertoire_songs')
+    .select('id,song')
+    .eq('id', songId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return mapStoredSong(data);
+}
+
 async function enrichMinistries(rows) {
   const ministryIds = [...new Set((rows || []).map((row) => row.id).filter(Boolean))];
   const leaderIds = [...new Set((rows || []).map((row) => row.leader_id).filter(Boolean))];
@@ -543,18 +604,33 @@ async function enrichMinistries(rows) {
   )];
   const membershipMap = new Map();
   const memberIds = new Set();
+  const repertoireMap = new Map();
+  const repertoireSongIds = new Set();
 
   if (ministryIds.length > 0) {
     let memberships = null;
     let membershipError = null;
 
-    const withRoleResponse = await supabase
+    const withFunctionsResponse = await supabase
       .from('ministry_members')
-      .select('ministry_id,user_id,function_name')
+      .select('ministry_id,user_id,function_names')
       .in('ministry_id', ministryIds);
 
-    memberships = withRoleResponse.data;
-    membershipError = withRoleResponse.error;
+    memberships = withFunctionsResponse.data;
+    membershipError = withFunctionsResponse.error;
+
+    if (membershipError && membershipError.code === '42703') {
+      const legacyResponse = await supabase
+        .from('ministry_members')
+        .select('ministry_id,user_id,function_name')
+        .in('ministry_id', ministryIds);
+
+      memberships = (legacyResponse.data || []).map((item) => ({
+        ...item,
+        function_names: [String(item.function_name || 'Membro').trim() || 'Membro'],
+      }));
+      membershipError = legacyResponse.error;
+    }
 
     if (membershipError && membershipError.code === '42703') {
       const fallbackResponse = await supabase
@@ -564,7 +640,7 @@ async function enrichMinistries(rows) {
 
       memberships = (fallbackResponse.data || []).map((item) => ({
         ...item,
-        function_name: 'Membro',
+        function_names: ['Membro'],
       }));
       membershipError = fallbackResponse.error;
     }
@@ -577,14 +653,49 @@ async function enrichMinistries(rows) {
       for (const membership of memberships || []) {
         const ministryId = membership.ministry_id;
         const userId = membership.user_id;
-        const functionName = String(membership.function_name || 'Membro').trim() || 'Membro';
+        const functionNames = normalizeFunctionNames(membership.function_names);
         if (!membershipMap.has(ministryId)) {
           membershipMap.set(ministryId, []);
         }
-        membershipMap.get(ministryId).push({ user_id: userId, function_name: functionName });
+        membershipMap.get(ministryId).push({ user_id: userId, function_names: functionNames });
         memberIds.add(userId);
       }
     }
+  }
+
+  if (ministryIds.length > 0) {
+    const { data: links, error: linksError } = await supabase
+      .from('ministry_repertoire')
+      .select('ministry_id,song_id')
+      .in('ministry_id', ministryIds);
+
+    if (linksError) {
+      throw new Error(linksError.message);
+    }
+
+    for (const link of links || []) {
+      if (!repertoireMap.has(link.ministry_id)) {
+        repertoireMap.set(link.ministry_id, []);
+      }
+      repertoireMap.get(link.ministry_id).push(link.song_id);
+      repertoireSongIds.add(link.song_id);
+    }
+  }
+
+  let repertoireSongMap = new Map();
+  if (repertoireSongIds.size > 0) {
+    const { data: songs, error: songsError } = await supabase
+      .from('repertoire_songs')
+      .select('id,song')
+      .in('id', [...repertoireSongIds]);
+
+    if (songsError) {
+      throw new Error(songsError.message);
+    }
+
+    repertoireSongMap = new Map((songs || [])
+      .map((item) => [item.id, mapStoredSong(item)])
+      .filter((entry) => Boolean(entry[1])));
   }
 
   const userIds = [...new Set([...leaderIds, ...managerIds, ...memberIds])];
@@ -614,10 +725,12 @@ async function enrichMinistries(rows) {
       .map((membership) => {
         const user = userMap.get(membership.user_id);
         if (!user || isGhostUser(user)) return null;
+        const functionNames = normalizeFunctionNames(membership.function_names);
         return {
           id: user.id,
           name: user.name || user.full_name,
-          functionName: membership.function_name || 'Membro',
+          functionName: functionNames[0] || 'Membro',
+          functionNames,
         };
       })
       .filter(Boolean);
@@ -635,6 +748,9 @@ async function enrichMinistries(rows) {
       member_users: memberUsers,
       member_user_ids: memberUserIds,
       member_count: memberUserIds.length,
+      repertoire: (repertoireMap.get(row.id) || [])
+        .map((songId) => repertoireSongMap.get(songId))
+        .filter(Boolean),
     };
   });
 }
@@ -837,7 +953,7 @@ app.get('/api/users/leaders', asyncHandler(async (req, res) => {
 
 app.patch('/api/users/:id/profile', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, profilePicture } = req.body || {};
+  const { name, profilePicture, themePreference } = req.body || {};
 
   const payload = {};
 
@@ -848,6 +964,14 @@ app.patch('/api/users/:id/profile', asyncHandler(async (req, res) => {
 
   if (typeof profilePicture === 'string') {
     payload.profile_picture = profilePicture;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'themePreference')) {
+    const normalizedTheme = normalizeThemePreference(themePreference);
+    if (!normalizedTheme) {
+      return res.status(400).json({ message: 'Tema invalido. Use "light" ou "dark".' });
+    }
+    payload.theme_preference = normalizedTheme;
   }
 
   const { data, error } = await supabase
@@ -987,6 +1111,98 @@ app.get('/api/ministries/:id', asyncHandler(async (req, res) => {
   return res.json({ ministry: mapMinistry(ministry) });
 }));
 
+app.get('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
+  const ministry = await getMinistryById(req.params.id);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  return res.json({ songs: Array.isArray(ministry.repertoire) ? ministry.repertoire : [] });
+}));
+
+app.post('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { actorId, song, songs } = req.body || {};
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  const normalizedSongs = normalizeScheduleSongs(Array.isArray(songs) ? songs : (song ? [song] : []));
+  if (normalizedSongs.length === 0) {
+    return res.status(400).json({ message: 'Informe ao menos uma musica valida.' });
+  }
+
+  const songRows = normalizedSongs.map((item) => ({
+    id: item.id,
+    song: item,
+    updated_at: new Date().toISOString(),
+  }));
+
+  const { error: songUpsertError } = await supabase
+    .from('repertoire_songs')
+    .upsert(songRows, { onConflict: 'id' });
+
+  if (songUpsertError) {
+    throw new Error(songUpsertError.message);
+  }
+
+  const linkRows = normalizedSongs.map((item) => ({
+    ministry_id: id,
+    song_id: item.id,
+  }));
+
+  const { error: linkError } = await supabase
+    .from('ministry_repertoire')
+    .upsert(linkRows, { onConflict: 'ministry_id,song_id' });
+
+  if (linkError) {
+    throw new Error(linkError.message);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(201).json({ ministry: mapMinistry(updated), songs: updated?.repertoire || [] });
+}));
+
+app.patch('/api/music/tracks/:id', asyncHandler(async (req, res) => {
+  const songId = String(req.params.id || '').trim();
+  if (!songId) {
+    return res.status(400).json({ message: 'ID da musica e obrigatorio.' });
+  }
+
+  const existing = await getStoredRepertoireSongById(songId);
+  const normalized = normalizeScheduleSong({ id: songId, ...(existing || {}), ...(req.body || {}) });
+  if (!normalized) {
+    return res.status(400).json({ message: 'Musica invalida.' });
+  }
+
+  const { error } = await supabase
+    .from('repertoire_songs')
+    .upsert({
+      id: songId,
+      song: normalized,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return res.json({ song: normalized });
+}));
+
 app.get('/api/music/search', asyncHandler(async (req, res) => {
   const query = String(req.query.query || '').trim();
   const limit = Math.min(50, Math.max(1, normalizeNumber(req.query.limit, 15)));
@@ -1023,6 +1239,11 @@ app.get('/api/music/tracks/:id', asyncHandler(async (req, res) => {
   const trackId = String(req.params.id || '').trim();
   if (!trackId) {
     return res.status(400).json({ message: 'ID da musica e obrigatorio.' });
+  }
+
+  const storedSong = await getStoredRepertoireSongById(trackId);
+  if (storedSong) {
+    return res.json({ song: storedSong });
   }
 
   const deezerTrack = await requestDeezerJson(`/track/${encodeURIComponent(trackId)}`);
@@ -1524,12 +1745,18 @@ app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Membro informado e invalido.' });
   }
 
+  const ministryBeforeUpdate = await getMinistryById(id);
+  const existingMember = (ministryBeforeUpdate?.memberUsers || []).find((item) => item.id === userId);
+  const existingFunctions = existingMember ? normalizeFunctionNames(existingMember.functionNames || existingMember.functionName) : [];
+  const nextFunctions = [...new Set([...existingFunctions, normalizedFunction])];
+
   const { error: upsertError } = await supabase
     .from('ministry_members')
     .upsert({
       ministry_id: id,
       user_id: userId,
-      function_name: normalizedFunction,
+      function_name: nextFunctions[0] || normalizedFunction,
+      function_names: nextFunctions,
     }, { onConflict: 'ministry_id,user_id' });
 
   if (upsertError) {
