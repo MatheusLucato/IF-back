@@ -1057,7 +1057,7 @@ app.get('/api/music/artists/search', asyncHandler(async (req, res) => {
 
 app.get('/api/music/artists/:id/tracks', asyncHandler(async (req, res) => {
   const artistId = String(req.params.id || '').trim();
-  const limit = Math.min(100, Math.max(1, normalizeNumber(req.query.limit, 50)));
+  const limit = Math.min(500, Math.max(1, normalizeNumber(req.query.limit, 200)));
 
   if (!artistId) {
     return res.status(400).json({ message: 'ID do artista e obrigatorio.' });
