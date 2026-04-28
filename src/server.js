@@ -196,6 +196,205 @@ async function updateMinistryTeamsSafely(ministryId, teams) {
   }
 }
 
+async function requestDeezerJson(path) {
+  const response = await fetch(`https://api.deezer.com${path}`);
+  if (!response.ok) {
+    throw new Error('Falha ao consultar Deezer API.');
+  }
+
+  const payload = await response.json();
+  if (payload && payload.error) {
+    const errorMessage = payload.error.message || 'Falha ao consultar Deezer API.';
+    throw new Error(errorMessage);
+  }
+
+  return payload;
+}
+
+function normalizeNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function mapDeezerTrackToSong(track) {
+  if (!track || !track.id) return null;
+
+  const title = String(track.title || '').trim() || 'nao fornecido';
+  const artist = String(track.artist?.name || '').trim() || 'nao fornecido';
+  const youtubeQuery = encodeURIComponent(`${title} ${artist}`);
+  const bpm = normalizeNumber(track.bpm, 0);
+
+  return {
+    id: String(track.id),
+    title,
+    artist,
+    durationSeconds: normalizeNumber(track.duration, 0),
+    key: 'nao fornecido',
+    bpm: bpm > 0 ? Math.round(bpm) : 0,
+    lyrics: 'nao fornecido',
+    chords: 'nao fornecido',
+    audioUrl: track.preview || null,
+    youtubeUrl: `https://www.youtube.com/results?search_query=${youtubeQuery}`,
+    thumbnailUrl: track.album?.cover_big || track.album?.cover_medium || track.album?.cover || null,
+    deezerUrl: track.link || null,
+    source: 'deezer',
+    tags: [],
+  };
+}
+
+function mapDeezerArtistToArtist(artist) {
+  if (!artist || !artist.id) return null;
+
+  const name = String(artist.name || '').trim() || 'nao fornecido';
+  return {
+    id: String(artist.id),
+    name,
+    pictureUrl: artist.picture_big || artist.picture_medium || artist.picture || null,
+  };
+}
+
+function normalizeScheduleMembers(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((member) => {
+      if (!member || typeof member !== 'object') return null;
+      const entry = member;
+      const memberId = String(entry.memberId || '').trim();
+      const memberName = String(entry.memberName || '').trim();
+      if (!memberId || !memberName) return null;
+      return {
+        memberId,
+        memberName,
+        role: String(entry.role || 'Membro').trim() || 'Membro',
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeScheduleAssignments(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((assignment) => {
+      if (!assignment || typeof assignment !== 'object') return null;
+      const entry = assignment;
+      const ministryId = String(entry.ministryId || '').trim();
+      if (!ministryId) return null;
+      const ministryName = String(entry.ministryName || '').trim() || 'Ministerio';
+      const members = normalizeScheduleMembers(entry.members);
+      return {
+        ministryId,
+        ministryName,
+        members,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeScheduleSong(value) {
+  if (typeof value === 'string') {
+    const id = String(value || '').trim();
+    if (!id) return null;
+    return {
+      id,
+      title: 'nao fornecido',
+      artist: 'nao fornecido',
+      durationSeconds: 0,
+      key: 'nao fornecido',
+      bpm: 0,
+      lyrics: 'nao fornecido',
+      chords: 'nao fornecido',
+      audioUrl: null,
+      youtubeUrl: null,
+      thumbnailUrl: null,
+      deezerUrl: null,
+      source: 'manual',
+      tags: [],
+    };
+  }
+
+  if (!value || typeof value !== 'object') return null;
+
+  const item = value;
+  const id = String(item.id || '').trim();
+  if (!id) return null;
+
+  return {
+    id,
+    title: String(item.title || '').trim() || 'nao fornecido',
+    artist: String(item.artist || '').trim() || 'nao fornecido',
+    durationSeconds: normalizeNumber(item.durationSeconds, 0),
+    key: String(item.key || '').trim() || 'nao fornecido',
+    bpm: normalizeNumber(item.bpm, 0),
+    lyrics: String(item.lyrics || '').trim() || 'nao fornecido',
+    chords: String(item.chords || '').trim() || 'nao fornecido',
+    audioUrl: item.audioUrl ? String(item.audioUrl) : null,
+    youtubeUrl: item.youtubeUrl ? String(item.youtubeUrl) : null,
+    thumbnailUrl: item.thumbnailUrl ? String(item.thumbnailUrl) : null,
+    deezerUrl: item.deezerUrl ? String(item.deezerUrl) : null,
+    source: item.source === 'deezer' ? 'deezer' : 'manual',
+    tags: Array.isArray(item.tags) ? item.tags.map((tag) => String(tag || '').trim()).filter(Boolean) : [],
+  };
+}
+
+function normalizeScheduleSongs(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const output = [];
+
+  value.forEach((item) => {
+    const normalized = normalizeScheduleSong(item);
+    if (!normalized) return;
+    if (seen.has(normalized.id)) return;
+    seen.add(normalized.id);
+    output.push(normalized);
+  });
+
+  return output;
+}
+
+function normalizeServiceTime(value) {
+  const normalized = String(value || '').trim();
+  if (normalized === 'morning' || normalized === 'evening' || normalized === 'both') {
+    return normalized;
+  }
+  return '';
+}
+
+function normalizeScheduleDate(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+
+  const parsed = new Date(`${normalized}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return normalized;
+}
+
+function normalizeOptionalId(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function normalizeOptionalText(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function mapSchedule(row) {
+  return {
+    id: row.id,
+    date: row.date,
+    serviceTime: row.service_time,
+    assignments: normalizeScheduleAssignments(row.assignments),
+    createdByUserId: row.created_by_user_id || null,
+    musicMinistryId: row.music_ministry_id || null,
+    musicMinisterId: row.music_minister_id || null,
+    musicMinisterName: row.music_minister_name || null,
+    songs: normalizeScheduleSongs(row.songs),
+  };
+}
+
 function mapMinistry(row) {
   return {
     id: row.id,
@@ -774,6 +973,246 @@ app.get('/api/ministries/:id', asyncHandler(async (req, res) => {
   }
 
   return res.json({ ministry: mapMinistry(ministry) });
+}));
+
+app.get('/api/music/search', asyncHandler(async (req, res) => {
+  const query = String(req.query.query || '').trim();
+  const limit = Math.min(50, Math.max(1, normalizeNumber(req.query.limit, 15)));
+  const index = Math.max(0, normalizeNumber(req.query.index, 0));
+
+  if (query.length < 2) {
+    return res.json({ songs: [], total: 0, nextIndex: null });
+  }
+
+  const deezerPayload = await requestDeezerJson(`/search?q=${encodeURIComponent(query)}&limit=${limit}&index=${index}`);
+  const songs = (deezerPayload.data || []).map(mapDeezerTrackToSong).filter(Boolean);
+
+  let nextIndex = null;
+  if (typeof deezerPayload.next === 'string' && deezerPayload.next.includes('index=')) {
+    try {
+      const nextUrl = new URL(deezerPayload.next);
+      const parsed = Number(nextUrl.searchParams.get('index'));
+      if (Number.isFinite(parsed)) {
+        nextIndex = parsed;
+      }
+    } catch {
+      nextIndex = null;
+    }
+  }
+
+  return res.json({
+    songs,
+    total: normalizeNumber(deezerPayload.total, songs.length),
+    nextIndex,
+  });
+}));
+
+app.get('/api/music/tracks/:id', asyncHandler(async (req, res) => {
+  const trackId = String(req.params.id || '').trim();
+  if (!trackId) {
+    return res.status(400).json({ message: 'ID da musica e obrigatorio.' });
+  }
+
+  const deezerTrack = await requestDeezerJson(`/track/${encodeURIComponent(trackId)}`);
+  const song = mapDeezerTrackToSong(deezerTrack);
+
+  if (!song) {
+    return res.status(404).json({ message: 'Musica nao encontrada na Deezer.' });
+  }
+
+  return res.json({ song });
+}));
+
+app.get('/api/music/artists/search', asyncHandler(async (req, res) => {
+  const query = String(req.query.query || '').trim();
+  const limit = Math.min(50, Math.max(1, normalizeNumber(req.query.limit, 15)));
+  const index = Math.max(0, normalizeNumber(req.query.index, 0));
+
+  if (query.length < 2) {
+    return res.json({ artists: [], total: 0, nextIndex: null });
+  }
+
+  const payload = await requestDeezerJson(`/search/artist?q=${encodeURIComponent(query)}&limit=${limit}&index=${index}`);
+  const artists = (payload.data || []).map(mapDeezerArtistToArtist).filter(Boolean);
+
+  let nextIndex = null;
+  if (typeof payload.next === 'string' && payload.next.includes('index=')) {
+    try {
+      const nextUrl = new URL(payload.next);
+      const parsed = Number(nextUrl.searchParams.get('index'));
+      if (Number.isFinite(parsed)) {
+        nextIndex = parsed;
+      }
+    } catch {
+      nextIndex = null;
+    }
+  }
+
+  return res.json({
+    artists,
+    total: normalizeNumber(payload.total, artists.length),
+    nextIndex,
+  });
+}));
+
+app.get('/api/music/artists/:id/tracks', asyncHandler(async (req, res) => {
+  const artistId = String(req.params.id || '').trim();
+  const limit = Math.min(100, Math.max(1, normalizeNumber(req.query.limit, 50)));
+
+  if (!artistId) {
+    return res.status(400).json({ message: 'ID do artista e obrigatorio.' });
+  }
+
+  const payload = await requestDeezerJson(`/artist/${encodeURIComponent(artistId)}/top?limit=${limit}`);
+  const songs = (payload.data || []).map(mapDeezerTrackToSong).filter(Boolean);
+
+  return res.json({ songs });
+}));
+
+app.get('/api/schedules', asyncHandler(async (req, res) => {
+  const { data, error } = await supabase
+    .from('schedules')
+    .select('*')
+    .order('date', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return res.json({ schedules: (data || []).map(mapSchedule) });
+}));
+
+app.post('/api/schedules', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const normalizedDate = normalizeScheduleDate(body.date);
+  const normalizedServiceTime = normalizeServiceTime(body.serviceTime);
+
+  if (!normalizedDate) {
+    return res.status(400).json({ message: 'Data invalida.' });
+  }
+
+  if (!normalizedServiceTime) {
+    return res.status(400).json({ message: 'Horario do culto invalido.' });
+  }
+
+  const payload = {
+    date: normalizedDate,
+    service_time: normalizedServiceTime,
+    assignments: normalizeScheduleAssignments(body.assignments),
+    songs: normalizeScheduleSongs(body.songs),
+    created_by_user_id: normalizeOptionalId(body.createdByUserId),
+    music_ministry_id: normalizeOptionalId(body.musicMinistryId),
+    music_minister_id: normalizeOptionalId(body.musicMinisterId),
+    music_minister_name: normalizeOptionalText(body.musicMinisterName),
+  };
+
+  const { data, error } = await supabase
+    .from('schedules')
+    .insert(payload)
+    .select('*')
+    .single();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return res.status(201).json({ schedule: mapSchedule(data) });
+}));
+
+app.patch('/api/schedules/:id', asyncHandler(async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) {
+    return res.status(400).json({ message: 'ID da escala e obrigatorio.' });
+  }
+
+  const body = req.body || {};
+  const payload = {};
+
+  if (Object.prototype.hasOwnProperty.call(body, 'date')) {
+    const normalizedDate = normalizeScheduleDate(body.date);
+    if (!normalizedDate) {
+      return res.status(400).json({ message: 'Data invalida.' });
+    }
+    payload.date = normalizedDate;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'serviceTime')) {
+    const normalizedServiceTime = normalizeServiceTime(body.serviceTime);
+    if (!normalizedServiceTime) {
+      return res.status(400).json({ message: 'Horario do culto invalido.' });
+    }
+    payload.service_time = normalizedServiceTime;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'assignments')) {
+    payload.assignments = normalizeScheduleAssignments(body.assignments);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'songs')) {
+    payload.songs = normalizeScheduleSongs(body.songs);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'createdByUserId')) {
+    payload.created_by_user_id = normalizeOptionalId(body.createdByUserId);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'musicMinistryId')) {
+    payload.music_ministry_id = normalizeOptionalId(body.musicMinistryId);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'musicMinisterId')) {
+    payload.music_minister_id = normalizeOptionalId(body.musicMinisterId);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'musicMinisterName')) {
+    payload.music_minister_name = normalizeOptionalText(body.musicMinisterName);
+  }
+
+  if (Object.keys(payload).length === 0) {
+    return res.status(400).json({ message: 'Nenhuma alteracao enviada.' });
+  }
+
+  const { data, error } = await supabase
+    .from('schedules')
+    .update(payload)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return res.status(404).json({ message: 'Escala nao encontrada.' });
+  }
+
+  return res.json({ schedule: mapSchedule(data) });
+}));
+
+app.delete('/api/schedules/:id', asyncHandler(async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!id) {
+    return res.status(400).json({ message: 'ID da escala e obrigatorio.' });
+  }
+
+  const { data, error } = await supabase
+    .from('schedules')
+    .delete()
+    .eq('id', id)
+    .select('id')
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return res.status(404).json({ message: 'Escala nao encontrada.' });
+  }
+
+  return res.status(204).send();
 }));
 
 app.post('/api/ministries', asyncHandler(async (req, res) => {

@@ -254,3 +254,46 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_birth_date ON users(birth_date);
 CREATE INDEX IF NOT EXISTS idx_ministries_leader_id ON ministries(leader_id);
 CREATE INDEX IF NOT EXISTS idx_ministries_created_at ON ministries(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  date date NOT NULL,
+  service_time text NOT NULL,
+  assignments jsonb NOT NULL DEFAULT '[]'::jsonb,
+  songs jsonb NOT NULL DEFAULT '[]'::jsonb,
+  music_ministry_id uuid REFERENCES ministries(id) ON DELETE SET NULL,
+  music_minister_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  music_minister_name text,
+  created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE schedules
+  ADD COLUMN IF NOT EXISTS date date,
+  ADD COLUMN IF NOT EXISTS service_time text,
+  ADD COLUMN IF NOT EXISTS assignments jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS songs jsonb DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS music_ministry_id uuid REFERENCES ministries(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS music_minister_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS music_minister_name text,
+  ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
+
+UPDATE schedules
+SET assignments = '[]'::jsonb
+WHERE assignments IS NULL;
+
+UPDATE schedules
+SET songs = '[]'::jsonb
+WHERE songs IS NULL;
+
+ALTER TABLE schedules
+  ALTER COLUMN assignments SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN assignments SET NOT NULL,
+  ALTER COLUMN songs SET DEFAULT '[]'::jsonb,
+  ALTER COLUMN songs SET NOT NULL,
+  ALTER COLUMN created_at SET DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS idx_schedules_date ON schedules(date);
+CREATE INDEX IF NOT EXISTS idx_schedules_service_time ON schedules(service_time);
+CREATE INDEX IF NOT EXISTS idx_schedules_created_by ON schedules(created_by_user_id);
