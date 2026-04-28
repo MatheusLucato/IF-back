@@ -666,6 +666,18 @@ app.get('/health', asyncHandler(async (_req, res) => {
   res.json({ ok: true, service: 'IF-back', db: 'connected', time: new Date().toISOString() });
 }));
 
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    ok: true,
+    service: 'IF-back',
+    message: 'API online. Use /health para checar status e /api/* para rotas da aplicacao.',
+    endpoints: {
+      health: '/health',
+    },
+    time: new Date().toISOString(),
+  });
+});
+
 app.post('/api/auth/register', asyncHandler(async (req, res) => {
   const { name, email, password, isLeader, birthDate } = req.body || {};
 
