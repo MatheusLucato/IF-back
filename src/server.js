@@ -1176,6 +1176,40 @@ app.post('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
   return res.status(201).json({ ministry: mapMinistry(updated), songs: updated?.repertoire || [] });
 }));
 
+app.delete('/api/ministries/:id/repertoire/:songId', asyncHandler(async (req, res) => {
+  const { id, songId } = req.params;
+  const { actorId } = req.body || {};
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !canManageMinistry(actor, ministry)) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  // Remove the song from ministry_repertoire table
+  const { error: linkError } = await supabase
+    .from('ministry_repertoire')
+    .delete()
+    .eq('ministry_id', id)
+    .eq('song_id', songId);
+
+  if (linkError) {
+    throw new Error(linkError.message);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.json({ ministry: mapMinistry(updated) });
+}));
+
 app.patch('/api/music/tracks/:id', asyncHandler(async (req, res) => {
   const songId = String(req.params.id || '').trim();
   if (!songId) {
