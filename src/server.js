@@ -262,7 +262,7 @@ function mapDeezerTrackToSong(track) {
     bpm: bpm > 0 ? Math.round(bpm) : 0,
     lyrics: 'nao fornecido',
     chords: 'nao fornecido',
-    audioUrl: track.preview || null,
+    audioUrl: null,
     youtubeUrl: `https://www.youtube.com/results?search_query=${youtubeQuery}`,
     thumbnailUrl: track.album?.cover_big || track.album?.cover_medium || track.album?.cover || null,
     deezerUrl: track.link || null,
