@@ -1798,12 +1798,12 @@ app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
   }
 
   const updated = await getMinistryById(id);
-  return res.status(200).json({ ministry: mapMinistry(updated) });
+  return res.status(201).json({ ministry: mapMinistry(updated) });
 }));
 
 app.delete('/api/ministries/:id/members/:userId', asyncHandler(async (req, res) => {
   const { id, userId } = req.params;
-  const actorId = String(req.query.actorId || '');
+  const { actorId } = req.body || {};
 
   if (!actorId) {
     return res.status(400).json({ message: 'actorId e obrigatorio.' });
