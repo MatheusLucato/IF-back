@@ -389,6 +389,55 @@ function normalizeServiceTime(value) {
   return '';
 }
 
+function overlapsServiceTime(a, b) {
+  return a === 'both' || b === 'both' || a === b;
+}
+
+async function checkScheduleConflicts(date, serviceTime, assignments, excludeScheduleId) {
+  const conflicts = [];
+  
+  // Get existing schedules for the same date with overlapping service time
+  let query = supabase
+    .from('schedules')
+    .select('id, service_time, assignments')
+    .eq('date', date);
+  
+  if (excludeScheduleId) {
+    query = query.neq('id', excludeScheduleId);
+  }
+  
+  const { data: existingSchedules, error: schedulesError } = await query;
+  
+  if (schedulesError) {
+    throw new Error(schedulesError.message);
+  }
+  
+  // Check each assignment for conflicts
+  assignments.forEach(assignment => {
+    assignment.members.forEach(member => {
+      existingSchedules.forEach(existingSchedule => {
+        if (overlapsServiceTime(existingSchedule.service_time, serviceTime)) {
+          const existingAssignments = existingSchedule.assignments || [];
+          existingAssignments.forEach(existingAssignment => {
+            if (existingAssignment.members.some(existingMember => existingMember.memberId === member.memberId)) {
+              conflicts.push({
+                memberId: member.memberId,
+                memberName: member.memberName,
+                conflictingScheduleId: existingSchedule.id,
+                conflictingMinistry: existingAssignment.ministryName,
+                conflictingServiceTime: existingSchedule.service_time,
+                message: `${member.memberName} já escalado(a) em "${existingAssignment.ministryName}" neste mesmo período`
+              });
+            }
+          });
+        }
+      });
+    });
+  });
+  
+  return conflicts;
+}
+
 function normalizeScheduleDate(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.trim();
@@ -1363,10 +1412,22 @@ app.post('/api/schedules', asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Horario do culto invalido.' });
   }
 
+  // Check for conflicts before creating schedule
+  const assignments = normalizeScheduleAssignments(body.assignments);
+  if (assignments && assignments.length > 0) {
+    const conflicts = await checkScheduleConflicts(normalizedDate, normalizedServiceTime, assignments, null);
+    if (conflicts.length > 0) {
+      return res.status(409).json({ 
+        message: 'Conflito de escalonamento detectado', 
+        conflicts: conflicts 
+      });
+    }
+  }
+
   const payload = {
     date: normalizedDate,
     service_time: normalizedServiceTime,
-    assignments: normalizeScheduleAssignments(body.assignments),
+    assignments: assignments,
     songs: normalizeScheduleSongs(body.songs),
     created_by_user_id: normalizeOptionalId(body.createdByUserId),
     music_ministry_id: normalizeOptionalId(body.musicMinistryId),
@@ -1396,6 +1457,17 @@ app.patch('/api/schedules/:id', asyncHandler(async (req, res) => {
   const body = req.body || {};
   const payload = {};
 
+  // Get current schedule for comparison
+  const { data: currentSchedule, error: fetchError } = await supabase
+    .from('schedules')
+    .select('*')
+    .eq('id', id)
+    .single();
+
+  if (fetchError) {
+    return res.status(404).json({ message: 'Escala nao encontrada.' });
+  }
+
   if (Object.prototype.hasOwnProperty.call(body, 'date')) {
     const normalizedDate = normalizeScheduleDate(body.date);
     if (!normalizedDate) {
@@ -1414,6 +1486,18 @@ app.patch('/api/schedules/:id', asyncHandler(async (req, res) => {
 
   if (Object.prototype.hasOwnProperty.call(body, 'assignments')) {
     payload.assignments = normalizeScheduleAssignments(body.assignments);
+    
+    // Check for conflicts with updated assignments
+    const checkDate = payload.date || currentSchedule.date;
+    const checkServiceTime = payload.service_time || currentSchedule.service_time;
+    
+    const conflicts = await checkScheduleConflicts(checkDate, checkServiceTime, payload.assignments, id);
+    if (conflicts.length > 0) {
+      return res.status(409).json({ 
+        message: 'Conflito de escalonamento detectado', 
+        conflicts: conflicts 
+      });
+    }
   }
 
   if (Object.prototype.hasOwnProperty.call(body, 'songs')) {
