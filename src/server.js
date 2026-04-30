@@ -571,13 +571,26 @@ async function canCreateMinistry(user) {
   return true;
 }
 
-function canManageMinistry(actor, ministry) {
+async function canManageMinistry(actor, ministry) {
   if (!actor || !ministry) return false;
   if (actor.role === 'admin') return true;
   if (ministry.leader_id === actor.id) return true;
+  
+  // Check managers column
   const managers = Array.isArray(ministry.managers) ? ministry.managers : [];
-  return managers.includes(actor.id);
+  if (managers.includes(actor.id)) return true;
+
+  // Check ministry_ministers table
+  const { data, error } = await supabase
+    .from('ministry_ministers')
+    .select('user_id')
+    .eq('ministry_id', ministry.id)
+    .eq('user_id', actor.id)
+    .maybeSingle();
+
+  return !error && !!data;
 }
+
 
 function syncTeamsWithMemberIds(teams, validMemberIds) {
   const validIds = new Set(normalizeStringArray(validMemberIds));
@@ -650,15 +663,35 @@ async function getStoredRepertoireSongById(songId) {
 async function enrichMinistries(rows) {
   const ministryIds = [...new Set((rows || []).map((row) => row.id).filter(Boolean))];
   const leaderIds = [...new Set((rows || []).map((row) => row.leader_id).filter(Boolean))];
-  const managerIds = [...new Set(
+  const managerIdsSet = new Set(
     (rows || [])
       .flatMap((row) => (Array.isArray(row.managers) ? row.managers : []))
       .filter(Boolean)
-  )];
+  );
+  
+  const ministersMap = new Map();
   const membershipMap = new Map();
   const memberIds = new Set();
   const repertoireMap = new Map();
   const repertoireSongIds = new Set();
+
+  if (ministryIds.length > 0) {
+    // 1. Fetch ministers from the new junction table
+    const { data: ministers, error: ministersError } = await supabase
+      .from('ministry_ministers')
+      .select('ministry_id,user_id')
+      .in('ministry_id', ministryIds);
+
+    if (!ministersError) {
+      for (const minister of ministers || []) {
+        if (!ministersMap.has(minister.ministry_id)) {
+          ministersMap.set(minister.ministry_id, []);
+        }
+        ministersMap.get(minister.ministry_id).push(minister.user_id);
+        managerIdsSet.add(minister.user_id);
+      }
+    }
+  }
 
   if (ministryIds.length > 0) {
     let memberships = null;
@@ -751,7 +784,8 @@ async function enrichMinistries(rows) {
       .filter((entry) => Boolean(entry[1])));
   }
 
-  const userIds = [...new Set([...leaderIds, ...managerIds, ...memberIds])];
+  const userIds = [...new Set([...leaderIds, ...Array.from(managerIdsSet), ...memberIds])];
+
 
   let userMap = new Map();
   if (userIds.length > 0) {
@@ -768,11 +802,15 @@ async function enrichMinistries(rows) {
   }
 
   return (rows || []).map((row) => {
-    const managers = Array.isArray(row.managers) ? row.managers : [];
-    const managerUsers = managers
+    const managersFromTable = ministersMap.get(row.id) || [];
+    const managersFromRow = Array.isArray(row.managers) ? row.managers : [];
+    const allManagerIds = [...new Set([...managersFromTable, ...managersFromRow])];
+    
+    const managerUsers = allManagerIds
       .map((managerId) => userMap.get(managerId))
       .map(mapLeader)
       .filter(Boolean);
+
     const memberships = membershipMap.get(row.id) || [];
     const memberUsers = memberships
       .map((membership) => {
@@ -1803,13 +1841,37 @@ app.patch('/api/ministries/:id/leaders', asyncHandler(async (req, res) => {
     }
   }
 
-  const { error } = await supabase
+  // 1. Update the legacy managers column for backward compatibility
+  const { error: managersError } = await supabase
     .from('ministries')
     .update({ managers: uniqueLeaderIds })
     .eq('id', id);
 
-  if (error) {
-    throw new Error(error.message);
+  if (managersError) {
+    throw new Error(managersError.message);
+  }
+
+  // 2. Update the new junction table
+  // First remove existing
+  await supabase
+    .from('ministry_ministers')
+    .delete()
+    .eq('ministry_id', id);
+
+  // Then insert new
+  if (uniqueLeaderIds.length > 0) {
+    const ministerRows = uniqueLeaderIds.map(userId => ({
+      ministry_id: id,
+      user_id: userId
+    }));
+    
+    const { error: insertError } = await supabase
+      .from('ministry_ministers')
+      .insert(ministerRows);
+
+    if (insertError) {
+      throw new Error(insertError.message);
+    }
   }
 
   const updated = await getMinistryById(id);

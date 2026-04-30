@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
   full_name text NOT NULL,
-  email text NOT NULL UNIQUE
+  email text NOT NULL UNIQUE,
   password_hash text NOT NULL,
   birth_date date,
   role user_role NOT NULL DEFAULT 'membro',
@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS ministry_members (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (ministry_id, user_id)
 );
+
+CREATE TABLE IF NOT EXISTS ministry_ministers (
+  ministry_id uuid NOT NULL REFERENCES ministries(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (ministry_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ministry_ministers_user_id ON ministry_ministers(user_id);
+CREATE INDEX IF NOT EXISTS idx_ministry_ministers_ministry_id ON ministry_ministers(ministry_id);
 
 ALTER TABLE ministry_members
   ADD COLUMN IF NOT EXISTS function_name text;
