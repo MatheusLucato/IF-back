@@ -357,3 +357,4 @@ ALTER TABLE schedules
 CREATE INDEX IF NOT EXISTS idx_schedules_date ON schedules(date);
 CREATE INDEX IF NOT EXISTS idx_schedules_service_time ON schedules(service_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_created_by ON schedules(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_music_minister_id ON schedules(music_minister_id);

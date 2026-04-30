@@ -338,6 +338,7 @@ function normalizeScheduleSong(value) {
       deezerUrl: null,
       source: 'manual',
       tags: [],
+      memberAssignment: null,
     };
   }
 
@@ -362,6 +363,7 @@ function normalizeScheduleSong(value) {
     deezerUrl: item.deezerUrl ? String(item.deezerUrl) : null,
     source: item.source === 'deezer' ? 'deezer' : 'manual',
     tags: Array.isArray(item.tags) ? item.tags.map((tag) => String(tag || '').trim()).filter(Boolean) : [],
+    memberAssignment: item.memberAssignment || null,
   };
 }
 
@@ -1565,6 +1567,58 @@ app.delete('/api/schedules/:id', asyncHandler(async (req, res) => {
   }
 
   return res.status(204).send();
+}));
+
+app.get('/api/schedules/minister/:ministerId', asyncHandler(async (req, res) => {
+  const ministerId = String(req.params.ministerId || '').trim();
+  if (!ministerId) {
+    return res.status(400).json({ message: 'ID do ministro e obrigatorio.' });
+  }
+
+  const { data, error } = await supabase
+    .from('schedules')
+    .select('*')
+    .eq('music_minister_id', ministerId)
+    .order('date', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return res.json({ schedules: (data || []).map(mapSchedule) });
+}));
+
+app.patch('/api/schedules/:id/songs', asyncHandler(async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  const { songs } = req.body || {};
+
+  if (!id) {
+    return res.status(400).json({ message: 'ID da escala e obrigatorio.' });
+  }
+
+  if (!Array.isArray(songs)) {
+    return res.status(400).json({ message: 'Songs deve ser um array.' });
+  }
+
+  const normalizedSongs = normalizeScheduleSongs(songs);
+
+  const { data, error } = await supabase
+    .from('schedules')
+    .update({ songs: normalizedSongs })
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (!data) {
+    return res.status(404).json({ message: 'Escala nao encontrada.' });
+  }
+
+  return res.json({ schedule: mapSchedule(data) });
 }));
 
 app.post('/api/ministries', asyncHandler(async (req, res) => {
