@@ -33,7 +33,6 @@ ALTER TABLE users
   ADD COLUMN IF NOT EXISTS name text,
   ADD COLUMN IF NOT EXISTS full_name text,
   ADD COLUMN IF NOT EXISTS email text,
-  ADD COLUMN IF NOT EXISTS password text,
   ADD COLUMN IF NOT EXISTS password_hash text,
   ADD COLUMN IF NOT EXISTS birth_date date,
   ADD COLUMN IF NOT EXISTS role user_role DEFAULT 'membro',
