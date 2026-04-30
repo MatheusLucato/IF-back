@@ -19,8 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
   full_name text NOT NULL,
-  email text NOT NULL UNIQUE,
-  password text,
+  email text NOT NULL UNIQUE
   password_hash text NOT NULL,
   birth_date date,
   role user_role NOT NULL DEFAULT 'membro',
