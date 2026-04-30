@@ -207,6 +207,16 @@ CREATE TABLE IF NOT EXISTS ministry_ministers (
 CREATE INDEX IF NOT EXISTS idx_ministry_ministers_user_id ON ministry_ministers(user_id);
 CREATE INDEX IF NOT EXISTS idx_ministry_ministers_ministry_id ON ministry_ministers(ministry_id);
 
+CREATE TABLE IF NOT EXISTS ministry_admins (
+  ministry_id uuid NOT NULL REFERENCES ministries(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (ministry_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ministry_admins_user_id ON ministry_admins(user_id);
+CREATE INDEX IF NOT EXISTS idx_ministry_admins_ministry_id ON ministry_admins(ministry_id);
+
 ALTER TABLE ministry_members
   ADD COLUMN IF NOT EXISTS function_name text;
 

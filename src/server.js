@@ -501,6 +501,8 @@ function mapMinistry(row) {
     leaderName: row.leader_name || 'Lider removido',
     managers: Array.isArray(row.managers) ? row.managers : [],
     managerUsers: Array.isArray(row.manager_users) ? row.manager_users : [],
+    ministers: Array.isArray(row.ministers) ? row.ministers : [],
+    ministerUsers: Array.isArray(row.minister_users) ? row.minister_users : [],
     memberUserIds: Array.isArray(row.member_user_ids) ? row.member_user_ids : [],
     memberUsers: Array.isArray(row.member_users) ? row.member_users : [],
     memberCount: Number.isFinite(row.member_count) ? row.member_count : 0,
@@ -576,13 +578,9 @@ async function canManageMinistry(actor, ministry) {
   if (actor.role === 'admin') return true;
   if (ministry.leader_id === actor.id) return true;
   
-  // Check managers column
-  const managers = Array.isArray(ministry.managers) ? ministry.managers : [];
-  if (managers.includes(actor.id)) return true;
-
-  // Check ministry_ministers table
+  // Check ministry_admins table
   const { data, error } = await supabase
-    .from('ministry_ministers')
+    .from('ministry_admins')
     .select('user_id')
     .eq('ministry_id', ministry.id)
     .eq('user_id', actor.id)
@@ -663,12 +661,7 @@ async function getStoredRepertoireSongById(songId) {
 async function enrichMinistries(rows) {
   const ministryIds = [...new Set((rows || []).map((row) => row.id).filter(Boolean))];
   const leaderIds = [...new Set((rows || []).map((row) => row.leader_id).filter(Boolean))];
-  const managerIdsSet = new Set(
-    (rows || [])
-      .flatMap((row) => (Array.isArray(row.managers) ? row.managers : []))
-      .filter(Boolean)
-  );
-  
+  const adminIdsMap = new Map();
   const ministersMap = new Map();
   const membershipMap = new Map();
   const memberIds = new Set();
@@ -688,7 +681,23 @@ async function enrichMinistries(rows) {
           ministersMap.set(minister.ministry_id, []);
         }
         ministersMap.get(minister.ministry_id).push(minister.user_id);
-        managerIdsSet.add(minister.user_id);
+        memberIds.add(minister.user_id); 
+      }
+    }
+
+    // 1b. Fetch administrators from the junction table
+    const { data: admins, error: adminsError } = await supabase
+      .from('ministry_admins')
+      .select('ministry_id,user_id')
+      .in('ministry_id', ministryIds);
+
+    if (!adminsError) {
+      for (const admin of admins || []) {
+        if (!adminIdsMap.has(admin.ministry_id)) {
+          adminIdsMap.set(admin.ministry_id, []);
+        }
+        adminIdsMap.get(admin.ministry_id).push(admin.user_id);
+        memberIds.add(admin.user_id);
       }
     }
   }
@@ -784,7 +793,7 @@ async function enrichMinistries(rows) {
       .filter((entry) => Boolean(entry[1])));
   }
 
-  const userIds = [...new Set([...leaderIds, ...Array.from(managerIdsSet), ...memberIds])];
+  const userIds = [...new Set([...leaderIds, ...memberIds])];
 
 
   let userMap = new Map();
@@ -802,12 +811,15 @@ async function enrichMinistries(rows) {
   }
 
   return (rows || []).map((row) => {
-    const managersFromTable = ministersMap.get(row.id) || [];
-    const managersFromRow = Array.isArray(row.managers) ? row.managers : [];
-    const allManagerIds = [...new Set([...managersFromTable, ...managersFromRow])];
-    
+    const allManagerIds = adminIdsMap.get(row.id) || [];
     const managerUsers = allManagerIds
       .map((managerId) => userMap.get(managerId))
+      .map(mapLeader)
+      .filter(Boolean);
+
+    const allMinisterIds = ministersMap.get(row.id) || [];
+    const ministerUsers = allMinisterIds
+      .map((ministerId) => userMap.get(ministerId))
       .map(mapLeader)
       .filter(Boolean);
 
@@ -836,6 +848,9 @@ async function enrichMinistries(rows) {
       ...row,
       leader_name: leaderName,
       manager_users: managerUsers,
+      managers: allManagerIds,
+      ministers: allMinisterIds,
+      minister_users: ministerUsers,
       member_users: memberUsers,
       member_user_ids: memberUserIds,
       member_count: memberUserIds.length,
@@ -1232,7 +1247,7 @@ app.post('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -1274,7 +1289,7 @@ app.post('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
 
 app.delete('/api/ministries/:id/repertoire/:songId', asyncHandler(async (req, res) => {
   const { id, songId } = req.params;
-  const { actorId } = req.body || {};
+  const actorId = req.body?.actorId || req.query.actorId;
 
   if (!actorId) {
     return res.status(400).json({ message: 'actorId e obrigatorio.' });
@@ -1287,7 +1302,7 @@ app.delete('/api/ministries/:id/repertoire/:songId', asyncHandler(async (req, re
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -1769,7 +1784,7 @@ app.patch('/api/ministries/:id/profile', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -1788,6 +1803,58 @@ app.patch('/api/ministries/:id/profile', asyncHandler(async (req, res) => {
 
   if (error) {
     throw new Error(error.message);
+  }
+
+  const updated = await getMinistryById(id);
+  return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+
+
+app.patch('/api/ministries/:id/ministers', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { actorId, ministerIds } = req.body || {};
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  if (!Array.isArray(ministerIds)) {
+    return res.status(400).json({ message: 'ministerIds precisa ser uma lista.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
+    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  }
+
+  const uniqueMinisterIds = [...new Set(ministerIds.filter(Boolean))];
+
+  // Sync with junction table
+  await supabase
+    .from('ministry_ministers')
+    .delete()
+    .eq('ministry_id', id);
+
+  if (uniqueMinisterIds.length > 0) {
+    const ministerRows = uniqueMinisterIds.map(userId => ({
+      ministry_id: id,
+      user_id: userId
+    }));
+    
+    const { error: insertError } = await supabase
+      .from('ministry_ministers')
+      .insert(ministerRows);
+
+    if (insertError) {
+      throw new Error(insertError.message);
+    }
   }
 
   const updated = await getMinistryById(id);
@@ -1813,7 +1880,7 @@ app.patch('/api/ministries/:id/leaders', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -1841,33 +1908,27 @@ app.patch('/api/ministries/:id/leaders', asyncHandler(async (req, res) => {
     }
   }
 
-  // 1. Update the legacy managers column for backward compatibility
-  const { error: managersError } = await supabase
+  // 1. Update the legacy managers column
+  await supabase
     .from('ministries')
     .update({ managers: uniqueLeaderIds })
     .eq('id', id);
 
-  if (managersError) {
-    throw new Error(managersError.message);
-  }
-
-  // 2. Update the new junction table
-  // First remove existing
+  // 2. Sync with ministry_admins table
   await supabase
-    .from('ministry_ministers')
+    .from('ministry_admins')
     .delete()
     .eq('ministry_id', id);
 
-  // Then insert new
   if (uniqueLeaderIds.length > 0) {
-    const ministerRows = uniqueLeaderIds.map(userId => ({
+    const adminRows = uniqueLeaderIds.map(userId => ({
       ministry_id: id,
       user_id: userId
     }));
     
     const { error: insertError } = await supabase
-      .from('ministry_ministers')
-      .insert(ministerRows);
+      .from('ministry_admins')
+      .insert(adminRows);
 
     if (insertError) {
       throw new Error(insertError.message);
@@ -1979,7 +2040,7 @@ app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2011,7 +2072,7 @@ app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
 
 app.delete('/api/ministries/:id/members/:userId', asyncHandler(async (req, res) => {
   const { id, userId } = req.params;
-  const { actorId } = req.body || {};
+  const actorId = req.body?.actorId || req.query.actorId;
 
   if (!actorId) {
     return res.status(400).json({ message: 'actorId e obrigatorio.' });
@@ -2024,7 +2085,7 @@ app.delete('/api/ministries/:id/members/:userId', asyncHandler(async (req, res) 
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2077,7 +2138,7 @@ app.post('/api/ministries/:id/teams', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2138,7 +2199,7 @@ app.delete('/api/ministries/:id/teams/:teamId', asyncHandler(async (req, res) =>
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2190,7 +2251,7 @@ app.post('/api/ministries/:id/functions', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2231,7 +2292,7 @@ app.delete('/api/ministries/:id/functions/:functionId', asyncHandler(async (req,
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
@@ -2306,7 +2367,7 @@ app.post('/api/ministries/:id/image', upload.single('image'), asyncHandler(async
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !canManageMinistry(actor, ministry)) {
+  if (!actor || !(await canManageMinistry(actor, ministry))) {
     return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
   }
 
