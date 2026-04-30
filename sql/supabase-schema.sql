@@ -149,6 +149,7 @@ ALTER TABLE ministries
   ADD COLUMN IF NOT EXISTS member_count integer DEFAULT 0,
   ADD COLUMN IF NOT EXISTS color text DEFAULT '#ffffff',
   ADD COLUMN IF NOT EXISTS image_url text,
+  ADD COLUMN IF NOT EXISTS is_music_ministry boolean DEFAULT false,
   ADD COLUMN IF NOT EXISTS functions jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS teams jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS repertoire jsonb DEFAULT '[]'::jsonb,
@@ -177,6 +178,14 @@ WHERE member_count IS NULL;
 UPDATE ministries
 SET color = '#ffffff'
 WHERE color IS NULL;
+
+UPDATE ministries
+SET is_music_ministry = false
+WHERE is_music_ministry IS NULL;
+
+UPDATE ministries
+SET is_music_ministry = false
+WHERE name = 'Recepção';
 
 UPDATE ministries
 SET name = 'Ministerio sem nome'

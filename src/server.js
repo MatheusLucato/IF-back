@@ -62,7 +62,7 @@ const upload = multer({
 
 const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,theme_preference,created_at';
 const USER_SELECT_WITH_PASSWORD = `${USER_SELECT},password,password_hash`;
-const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,functions,repertoire,created_at';
+const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,is_music_ministry,functions,repertoire,created_at';
 const MINISTRY_SELECT_WITH_TEAMS = `${MINISTRY_SELECT_BASE},teams`;
 let supportsMinistryTeamsColumn = true;
 
@@ -503,6 +503,7 @@ function mapMinistry(row) {
     memberCount: Number.isFinite(row.member_count) ? row.member_count : 0,
     color: row.color || '#ffffff',
     imageUrl: row.image_url || null,
+    isMusicMinistry: Boolean(row.is_music_ministry),
     functions: Array.isArray(row.functions) ? row.functions : [],
     repertoire: Array.isArray(row.repertoire) ? row.repertoire : [],
     teams: sanitizeMinistryTeams(row.teams),
@@ -1567,7 +1568,7 @@ app.delete('/api/schedules/:id', asyncHandler(async (req, res) => {
 }));
 
 app.post('/api/ministries', asyncHandler(async (req, res) => {
-  const { name, color, leaderId, actorId } = req.body || {};
+  const { name, color, isMusicMinistry, leaderId, actorId } = req.body || {};
 
   if (!name) {
     return res.status(400).json({ message: 'Nome e obrigatorio.' });
@@ -1622,6 +1623,7 @@ app.post('/api/ministries', asyncHandler(async (req, res) => {
     color: color || '#ffffff',
     image_url: null,
     functions: [],
+    is_music_ministry: Boolean(isMusicMinistry),
   };
 
   let createPayload = payload;
@@ -2129,6 +2131,42 @@ app.delete('/api/ministries/:id/functions/:functionId', asyncHandler(async (req,
 
   const updated = await getMinistryById(id);
   return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+app.delete('/api/ministries/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const actorId = String(req.query.actorId || '');
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const ministry = await getMinistryById(id);
+  const actor = await getUserById(actorId);
+
+  if (!ministry) {
+    return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  if (!actor) {
+    return res.status(403).json({ message: 'Sem permissao para excluir este ministerio.' });
+  }
+
+  // Allow admin or ministry leader to delete
+  if (actor.role !== 'admin' && ministry.leaderId !== actor.id) {
+    return res.status(403).json({ message: 'Apenas admins ou o lider do ministerio podem excluir.' });
+  }
+
+  const { error: deleteError } = await supabase
+    .from('ministries')
+    .delete()
+    .eq('id', id);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
+  return res.status(200).json({ message: 'Ministerio excluido com sucesso.' });
 }));
 
 app.post('/api/ministries/:id/image', upload.single('image'), asyncHandler(async (req, res) => {
