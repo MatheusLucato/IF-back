@@ -2099,6 +2099,29 @@ app.delete('/api/ministries/:id/members/:userId', asyncHandler(async (req, res) 
     throw new Error(deleteError.message);
   }
 
+  // Also remove from admins and ministers tables
+  await supabase
+    .from('ministry_admins')
+    .delete()
+    .eq('ministry_id', id)
+    .eq('user_id', userId);
+
+  await supabase
+    .from('ministry_ministers')
+    .delete()
+    .eq('ministry_id', id)
+    .eq('user_id', userId);
+
+  // Update legacy managers JSON column
+  const currentManagers = Array.isArray(ministry.managers) ? ministry.managers : [];
+  const nextManagers = currentManagers.filter(mId => mId !== userId);
+  if (nextManagers.length !== currentManagers.length) {
+    await supabase
+      .from('ministries')
+      .update({ managers: nextManagers })
+      .eq('id', id);
+  }
+
   const ministryAfterDelete = await getMinistryById(id);
   const syncedTeams = syncTeamsWithMemberIds(
     ministryAfterDelete?.teams,
