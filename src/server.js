@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const { randomUUID } = require('crypto');
+const bcrypt = require('bcrypt');
 const { getSupabase, initConnection } = require('./db');
 
 const app = express();
@@ -61,7 +62,7 @@ const upload = multer({
 });
 
 const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,theme_preference,created_at';
-const USER_SELECT_WITH_PASSWORD = `${USER_SELECT},password,password_hash`;
+const USER_SELECT_WITH_PASSWORD = `${USER_SELECT},password_hash`;
 const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,is_music_ministry,functions,repertoire,created_at';
 const MINISTRY_SELECT_WITH_TEAMS = `${MINISTRY_SELECT_BASE},teams`;
 let supportsMinistryTeamsColumn = true;
@@ -880,13 +881,13 @@ app.post('/api/auth/register', asyncHandler(async (req, res) => {
 
   const role = isLeader ? 'lider' : 'membro';
   const safeName = String(name).trim();
+  const passwordHash = await bcrypt.hash(String(password), 10);
   const userPayload = {
     id: randomUUID(),
     name: safeName,
     full_name: safeName,
     email: normalizedEmail,
-    password: String(password),
-    password_hash: String(password),
+    password_hash: passwordHash,
     birth_date: normalizedBirthDate,
     role,
     is_approved: role === 'lider' ? false : true,
@@ -914,8 +915,13 @@ app.post('/api/auth/login', asyncHandler(async (req, res) => {
 
   const user = await getUserWithPasswordByEmail(email);
 
-  const storedPassword = user ? (user.password || user.password_hash) : null;
-  if (!user || storedPassword !== String(password)) {
+  const storedPasswordHash = user ? user.password_hash : null;
+  if (!user || !storedPasswordHash) {
+    return res.status(401).json({ message: 'Credenciais invalidas.' });
+  }
+
+  const isPasswordValid = await bcrypt.compare(String(password), storedPasswordHash);
+  if (!isPasswordValid) {
     return res.status(401).json({ message: 'Credenciais invalidas.' });
   }
 

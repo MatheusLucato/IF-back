@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   name text NOT NULL,
   full_name text NOT NULL,
   email text NOT NULL UNIQUE,
-  password text NOT NULL,
+  password text,
   password_hash text NOT NULL,
   birth_date date,
   role user_role NOT NULL DEFAULT 'membro',
@@ -93,20 +93,6 @@ SET email = concat('user_', id::text, '@local.invalid')
 WHERE email IS NULL OR btrim(email) = '';
 
 UPDATE users
-SET password = 'change-me'
-WHERE password IS NULL OR btrim(password) = '';
-
-UPDATE users
-SET password = password_hash
-WHERE (password IS NULL OR btrim(password) = '')
-  AND password_hash IS NOT NULL
-  AND btrim(password_hash) <> '';
-
-UPDATE users
-SET password_hash = password
-WHERE password_hash IS NULL OR btrim(password_hash) = '';
-
-UPDATE users
 SET role = 'membro'
 WHERE role IS NULL;
 
@@ -118,7 +104,6 @@ ALTER TABLE users
   ALTER COLUMN name SET NOT NULL,
   ALTER COLUMN full_name SET NOT NULL,
   ALTER COLUMN email SET NOT NULL,
-  ALTER COLUMN password SET NOT NULL,
   ALTER COLUMN password_hash SET NOT NULL,
   ALTER COLUMN role SET DEFAULT 'membro',
   ALTER COLUMN role SET NOT NULL,
