@@ -1669,23 +1669,43 @@ app.patch('/api/schedules/:id', asyncHandler(async (req, res) => {
 
 app.delete('/api/schedules/:id', asyncHandler(async (req, res) => {
   const id = String(req.params.id || '').trim();
+  const actorId = String(req.query.actorId || '');
+
   if (!id) {
     return res.status(400).json({ message: 'ID da escala e obrigatorio.' });
   }
 
-  const { data, error } = await supabase
-    .from('schedules')
-    .delete()
-    .eq('id', id)
-    .select('id')
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
   }
 
-  if (!data) {
+  const actor = await getUserById(actorId);
+  const { data: schedule, error: fetchError } = await supabase
+    .from('schedules')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw new Error(fetchError.message);
+  }
+
+  if (!schedule) {
     return res.status(404).json({ message: 'Escala nao encontrada.' });
+  }
+
+  // Permission: Admin or Creator
+  if (actor?.role !== 'admin' && schedule.created_by_user_id !== actorId) {
+    return res.status(403).json({ message: 'Sem permissao para excluir esta escala.' });
+  }
+
+  const { error: deleteError } = await supabase
+    .from('schedules')
+    .delete()
+    .eq('id', id);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
   }
 
   return res.status(204).send();
