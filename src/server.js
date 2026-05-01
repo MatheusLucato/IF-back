@@ -2422,10 +2422,32 @@ app.delete('/api/ministries/:id', asyncHandler(async (req, res) => {
   }
 
   // Allow admin or ministry leader to delete
-  if (actor.role !== 'admin' && ministry.leaderId !== actor.id) {
+  if (actor.role !== 'admin' && ministry.leader_id !== actor.id) {
     return res.status(403).json({ message: 'Apenas admins ou o lider do ministerio podem excluir.' });
   }
 
+  // 1. Delete from junction tables first (Manual Cascade)
+  const junctionTables = [
+    'ministry_members',
+    'ministry_admins',
+    'ministry_ministers',
+    'ministry_repertoire'
+  ];
+
+  for (const table of junctionTables) {
+    await supabase
+      .from(table)
+      .delete()
+      .eq('ministry_id', id);
+  }
+
+  // 2. Nullify references in schedules
+  await supabase
+    .from('schedules')
+    .update({ music_ministry_id: null })
+    .eq('music_ministry_id', id);
+
+  // 3. Delete the ministry itself
   const { error: deleteError } = await supabase
     .from('ministries')
     .delete()
