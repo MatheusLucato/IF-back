@@ -589,6 +589,52 @@ async function canManageMinistry(actor, ministry) {
   return !error && !!data;
 }
 
+async function canAccessRepertoire(actor, ministry) {
+  if (!actor || !ministry) return false;
+  if (actor.role === 'admin') return true;
+  
+  // Rule: Must be a music ministry
+  if (!ministry.is_music_ministry) return false;
+  
+  // Rule: Must be leader or administrator of that ministry
+  return await canManageMinistry(actor, ministry);
+}
+
+async function canManageAnyMusicMinistry(actor) {
+  if (!actor) return false;
+  if (actor.role === 'admin') return true;
+
+  // Check if leader of any music ministry
+  const { data: leaderOf, error: leaderError } = await supabase
+    .from('ministries')
+    .select('id')
+    .eq('leader_id', actor.id)
+    .eq('is_music_ministry', true)
+    .limit(1);
+
+  if (!leaderError && leaderOf && leaderOf.length > 0) return true;
+
+  // Check if admin of any music ministry
+  const { data: adminOf, error: adminError } = await supabase
+    .from('ministry_admins')
+    .select('ministry_id')
+    .eq('user_id', actor.id);
+
+  if (!adminError && adminOf && adminOf.length > 0) {
+    const ministryIds = adminOf.map(a => a.ministry_id);
+    const { data: musicMinistries } = await supabase
+      .from('ministries')
+      .select('id')
+      .in('id', ministryIds)
+      .eq('is_music_ministry', true)
+      .limit(1);
+      
+    if (musicMinistries && musicMinistries.length > 0) return true;
+  }
+
+  return false;
+}
+
 
 function syncTeamsWithMemberIds(teams, validMemberIds) {
   const validIds = new Set(normalizeStringArray(validMemberIds));
@@ -1223,10 +1269,16 @@ app.get('/api/ministries/:id', asyncHandler(async (req, res) => {
 }));
 
 app.get('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
+  const actorId = req.query.actorId;
   const ministry = await getMinistryById(req.params.id);
 
   if (!ministry) {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
+  }
+
+  const actor = actorId ? await getUserById(actorId) : null;
+  if (!actor || !(await canAccessRepertoire(actor, ministry))) {
+    return res.status(403).json({ message: 'Sem permissao para visualizar este repertorio.' });
   }
 
   return res.json({ songs: Array.isArray(ministry.repertoire) ? ministry.repertoire : [] });
@@ -1247,8 +1299,8 @@ app.post('/api/ministries/:id/repertoire', asyncHandler(async (req, res) => {
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !(await canManageMinistry(actor, ministry))) {
-    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  if (!actor || !(await canAccessRepertoire(actor, ministry))) {
+    return res.status(403).json({ message: 'Sem permissao para editar este repertorio.' });
   }
 
   const normalizedSongs = normalizeScheduleSongs(Array.isArray(songs) ? songs : (song ? [song] : []));
@@ -1302,8 +1354,8 @@ app.delete('/api/ministries/:id/repertoire/:songId', asyncHandler(async (req, re
     return res.status(404).json({ message: 'Ministerio nao encontrado.' });
   }
 
-  if (!actor || !(await canManageMinistry(actor, ministry))) {
-    return res.status(403).json({ message: 'Sem permissao para editar este ministerio.' });
+  if (!actor || !(await canAccessRepertoire(actor, ministry))) {
+    return res.status(403).json({ message: 'Sem permissao para editar este repertorio.' });
   }
 
   // Remove the song from ministry_repertoire table
@@ -1323,8 +1375,19 @@ app.delete('/api/ministries/:id/repertoire/:songId', asyncHandler(async (req, re
 
 app.patch('/api/music/tracks/:id', asyncHandler(async (req, res) => {
   const songId = String(req.params.id || '').trim();
+  const { actorId } = req.body || {};
+
   if (!songId) {
     return res.status(400).json({ message: 'ID da musica e obrigatorio.' });
+  }
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  const actor = await getUserById(actorId);
+  if (!actor || !(await canManageAnyMusicMinistry(actor))) {
+    return res.status(403).json({ message: 'Sem permissao para editar musicas.' });
   }
 
   const existing = await getStoredRepertoireSongById(songId);
