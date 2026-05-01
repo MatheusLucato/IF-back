@@ -119,80 +119,19 @@ CREATE TABLE IF NOT EXISTS ministries (
   member_count integer NOT NULL DEFAULT 0,
   color text NOT NULL DEFAULT '#ffffff',
   image_url text,
+  is_music_ministry boolean NOT NULL DEFAULT false,
   functions jsonb NOT NULL DEFAULT '[]'::jsonb,
   teams jsonb NOT NULL DEFAULT '[]'::jsonb,
   repertoire jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-ALTER TABLE ministries
-  ADD COLUMN IF NOT EXISTS name text,
-  ADD COLUMN IF NOT EXISTS leader_id uuid REFERENCES users(id) ON DELETE CASCADE,
-  ADD COLUMN IF NOT EXISTS managers jsonb DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS member_count integer DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS color text DEFAULT '#ffffff',
-  ADD COLUMN IF NOT EXISTS image_url text,
-  ADD COLUMN IF NOT EXISTS is_music_ministry boolean DEFAULT false,
-  ADD COLUMN IF NOT EXISTS functions jsonb DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS teams jsonb DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS repertoire jsonb DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
-
-UPDATE ministries
-SET managers = '[]'::jsonb
-WHERE managers IS NULL;
-
-UPDATE ministries
-SET functions = '[]'::jsonb
-WHERE functions IS NULL;
-
-UPDATE ministries
-SET teams = '[]'::jsonb
-WHERE teams IS NULL;
-
-UPDATE ministries
-SET repertoire = '[]'::jsonb
-WHERE repertoire IS NULL;
-
-UPDATE ministries
-SET member_count = 0
-WHERE member_count IS NULL;
-
-UPDATE ministries
-SET color = '#ffffff'
-WHERE color IS NULL;
-
-UPDATE ministries
-SET is_music_ministry = false
-WHERE is_music_ministry IS NULL;
-
-UPDATE ministries
-SET is_music_ministry = false
-WHERE name = 'Recepção';
-
-UPDATE ministries
-SET name = 'Ministerio sem nome'
-WHERE name IS NULL OR btrim(name) = '';
-
-ALTER TABLE ministries
-  ALTER COLUMN name SET NOT NULL,
-  ALTER COLUMN managers SET DEFAULT '[]'::jsonb,
-  ALTER COLUMN managers SET NOT NULL,
-  ALTER COLUMN member_count SET DEFAULT 0,
-  ALTER COLUMN member_count SET NOT NULL,
-  ALTER COLUMN color SET DEFAULT '#ffffff',
-  ALTER COLUMN color SET NOT NULL,
-  ALTER COLUMN functions SET DEFAULT '[]'::jsonb,
-  ALTER COLUMN functions SET NOT NULL,
-  ALTER COLUMN teams SET DEFAULT '[]'::jsonb,
-  ALTER COLUMN teams SET NOT NULL,
-  ALTER COLUMN repertoire SET DEFAULT '[]'::jsonb,
-  ALTER COLUMN repertoire SET NOT NULL,
-  ALTER COLUMN created_at SET DEFAULT now();
-
 CREATE TABLE IF NOT EXISTS ministry_members (
   ministry_id uuid NOT NULL REFERENCES ministries(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  function_name text NOT NULL DEFAULT 'Membro',
+  function_names jsonb NOT NULL DEFAULT '["Membro"]'::jsonb,
+  function_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (ministry_id, user_id)
 );
@@ -216,28 +155,6 @@ CREATE TABLE IF NOT EXISTS ministry_admins (
 
 CREATE INDEX IF NOT EXISTS idx_ministry_admins_user_id ON ministry_admins(user_id);
 CREATE INDEX IF NOT EXISTS idx_ministry_admins_ministry_id ON ministry_admins(ministry_id);
-
-ALTER TABLE ministry_members
-  ADD COLUMN IF NOT EXISTS function_name text;
-
-ALTER TABLE ministry_members
-  ADD COLUMN IF NOT EXISTS function_names jsonb;
-
-UPDATE ministry_members
-SET function_name = 'Membro'
-WHERE function_name IS NULL OR btrim(function_name) = '';
-
-UPDATE ministry_members
-SET function_names = jsonb_build_array(function_name)
-WHERE function_names IS NULL
-  OR jsonb_typeof(function_names) <> 'array'
-  OR jsonb_array_length(function_names) = 0;
-
-ALTER TABLE ministry_members
-  ALTER COLUMN function_name SET NOT NULL,
-  ALTER COLUMN function_name SET DEFAULT 'Membro',
-  ALTER COLUMN function_names SET NOT NULL,
-  ALTER COLUMN function_names SET DEFAULT '["Membro"]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS repertoire_songs (
   id text PRIMARY KEY,

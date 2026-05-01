@@ -754,7 +754,7 @@ async function enrichMinistries(rows) {
 
     const withFunctionsResponse = await supabase
       .from('ministry_members')
-      .select('ministry_id,user_id,function_names')
+      .select('ministry_id,user_id,function_names,function_ids')
       .in('ministry_id', ministryIds);
 
     memberships = withFunctionsResponse.data;
@@ -798,7 +798,11 @@ async function enrichMinistries(rows) {
         if (!membershipMap.has(ministryId)) {
           membershipMap.set(ministryId, []);
         }
-        membershipMap.get(ministryId).push({ user_id: userId, function_names: functionNames });
+        membershipMap.get(ministryId).push({ 
+          user_id: userId, 
+          function_names: normalizeFunctionNames(membership.function_names),
+          function_ids: Array.isArray(membership.function_ids) ? membership.function_ids : []
+        });
         memberIds.add(userId);
       }
     }
@@ -874,12 +878,27 @@ async function enrichMinistries(rows) {
       .map((membership) => {
         const user = userMap.get(membership.user_id);
         if (!user || isGhostUser(user)) return null;
-        const functionNames = normalizeFunctionNames(membership.function_names);
+
+        const ministryFunctions = Array.isArray(row.functions) ? row.functions : [];
+        let finalNames = [];
+        const fIds = Array.isArray(membership.function_ids) ? membership.function_ids : [];
+
+        if (fIds.length > 0) {
+          finalNames = fIds
+            .map(id => ministryFunctions.find(f => f.id === id)?.name)
+            .filter(Boolean);
+        }
+
+        if (finalNames.length === 0) {
+          finalNames = normalizeFunctionNames(membership.function_names);
+        }
+
         return {
           id: user.id,
           name: user.name || user.full_name,
-          functionName: functionNames[0] || 'Membro',
-          functionNames,
+          functionName: finalNames[0] || 'Membro',
+          functionNames: finalNames,
+          functionIds: fIds,
         };
       })
       .filter(Boolean);
@@ -2142,6 +2161,8 @@ app.patch('/api/ministries/:id/members', asyncHandler(async (req, res) => {
       ministry_id: id,
       user_id: memberId,
       function_name: 'Membro',
+      function_names: ['Membro'],
+      function_ids: []
     }));
 
     const { error: insertError } = await supabase
@@ -2169,7 +2190,7 @@ app.patch('/api/ministries/:id/members', asyncHandler(async (req, res) => {
 
 app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { actorId, userId, functionName } = req.body || {};
+  const { actorId, userId, functionName, functionIds } = req.body || {};
 
   if (!actorId || !userId || !functionName) {
     return res.status(400).json({ message: 'actorId, userId e functionName sao obrigatorios.' });
@@ -2198,16 +2219,24 @@ app.post('/api/ministries/:id/members/link', asyncHandler(async (req, res) => {
 
   const ministryBeforeUpdate = await getMinistryById(id);
   const existingMember = (ministryBeforeUpdate?.memberUsers || []).find((item) => item.id === userId);
-  const existingFunctions = existingMember ? normalizeFunctionNames(existingMember.functionNames || existingMember.functionName) : [];
-  const nextFunctions = [...new Set([...existingFunctions, normalizedFunction])];
+  
+  // Names logic
+  const existingNames = existingMember ? normalizeFunctionNames(existingMember.functionNames || existingMember.functionName) : [];
+  const nextNames = [...new Set([...existingNames, ...normalizedFunction.split(',').map(s => s.trim())])].filter(Boolean);
+
+  // IDs logic
+  const existingIds = existingMember?.functionIds || [];
+  const incomingIds = Array.isArray(functionIds) ? functionIds : [];
+  const nextIds = [...new Set([...existingIds, ...incomingIds])].filter(Boolean);
 
   const { error: upsertError } = await supabase
     .from('ministry_members')
     .upsert({
       ministry_id: id,
       user_id: userId,
-      function_name: nextFunctions[0] || normalizedFunction,
-      function_names: nextFunctions,
+      function_name: nextNames[0] || 'Membro',
+      function_names: nextNames,
+      function_ids: nextIds
     }, { onConflict: 'ministry_id,user_id' });
 
   if (upsertError) {
@@ -2450,7 +2479,8 @@ app.post('/api/ministries/:id/functions', asyncHandler(async (req, res) => {
 
 app.delete('/api/ministries/:id/functions/:functionId', asyncHandler(async (req, res) => {
   const { id, functionId } = req.params;
-  const actorId = String(req.query.actorId || '');
+  const actorId = String(req.query.actorId || req.body?.actorId || '');
+  const { migrations } = req.body || {}; // Array of { userId, replacementId }
 
   if (!actorId) {
     return res.status(400).json({ message: 'actorId e obrigatorio.' });
@@ -2468,12 +2498,72 @@ app.delete('/api/ministries/:id/functions/:functionId', asyncHandler(async (req,
   }
 
   const currentFunctions = Array.isArray(ministry.functions) ? [...ministry.functions] : [];
-  const nextFunctions = currentFunctions.filter((item) => item.id !== functionId);
-
-  if (nextFunctions.length === currentFunctions.length) {
+  const functionToDelete = currentFunctions.find((item) => item.id === functionId);
+  
+  if (!functionToDelete) {
     return res.status(404).json({ message: 'Funcao nao encontrada.' });
   }
 
+  const oldName = functionToDelete.name;
+  const nextFunctions = currentFunctions.filter((item) => item.id !== functionId);
+
+  // 1. Fetch all members of this ministry to perform cleanup/migration
+  const { data: members, error: fetchMembersError } = await supabase
+    .from('ministry_members')
+    .select('*')
+    .eq('ministry_id', id);
+
+  if (!fetchMembersError && members) {
+    const migrationMap = new Map((migrations || []).map(m => [String(m.userId), String(m.replacementId)]));
+    const targetOldName = String(oldName || '').trim().toLowerCase();
+
+    for (const m of members) {
+      let fIds = Array.isArray(m.function_ids) ? [...m.function_ids] : [];
+      
+      // If we don't have IDs yet, try to build from names (migration phase)
+      if (fIds.length === 0) {
+        const mFunctions = Array.isArray(ministry.functions) ? ministry.functions : [];
+        const mNames = Array.isArray(m.function_names) ? m.function_names : [m.function_name];
+        fIds = mFunctions.filter(f => mNames.includes(f.name)).map(f => f.id);
+      }
+
+      const hasFunction = fIds.includes(functionId);
+
+      if (hasFunction) {
+        const replacementId = migrationMap.get(String(m.user_id));
+        const replacementFunction = nextFunctions.find(f => f.id === replacementId);
+        
+        if (replacementFunction) {
+          fIds = fIds.map(fid => fid === functionId ? replacementFunction.id : fid);
+        } else {
+          fIds = fIds.filter(fid => fid !== functionId);
+        }
+
+        const nextIds = [...new Set(fIds.filter(Boolean))];
+        const nextNames = nextIds
+          .map(id => nextFunctions.find(f => f.id === id)?.name)
+          .filter(Boolean);
+
+        if (nextNames.length === 0) nextNames.push('Membro');
+        
+        const { error: mUpdateError } = await supabase
+          .from('ministry_members')
+          .update({ 
+            function_ids: nextIds,
+            function_names: nextNames,
+            function_name: nextNames[0]
+          })
+          .eq('ministry_id', id)
+          .eq('user_id', m.user_id);
+
+        if (mUpdateError) {
+          console.error(`Erro ao atualizar membro ${m.user_id}:`, mUpdateError.message);
+        }
+      }
+    }
+  }
+
+  // 2. Update the ministry functions list
   const { error: updateError } = await supabase
     .from('ministries')
     .update({ functions: nextFunctions })
