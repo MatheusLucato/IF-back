@@ -1834,7 +1834,7 @@ app.post('/api/ministries', asyncHandler(async (req, res) => {
 
 app.patch('/api/ministries/:id/profile', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { actorId, name, color } = req.body || {};
+  const { actorId, name, color, isMusicMinistry } = req.body || {};
 
   if (!actorId) {
     return res.status(400).json({ message: 'actorId e obrigatorio.' });
@@ -1857,6 +1857,9 @@ app.patch('/api/ministries/:id/profile', asyncHandler(async (req, res) => {
   }
   if (typeof color === 'string' && color.trim()) {
     payload.color = color.trim();
+  }
+  if (isMusicMinistry !== undefined) {
+    payload.is_music_ministry = Boolean(isMusicMinistry);
   }
 
   const { error } = await supabase
