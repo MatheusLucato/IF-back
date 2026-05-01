@@ -1223,6 +1223,68 @@ app.delete('/api/users/:id/reject', asyncHandler(async (req, res) => {
   return res.status(204).send();
 }));
 
+app.delete('/api/users/:id', asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const actorId = String(req.query.actorId || '');
+
+  if (!actorId) {
+    return res.status(400).json({ message: 'actorId e obrigatorio.' });
+  }
+
+  // Permission: Only the user themselves or an admin can delete the account
+  const actor = await getUserById(actorId);
+  if (actor?.role !== 'admin' && actorId !== id) {
+    return res.status(403).json({ message: 'Sem permissao para excluir este usuario.' });
+  }
+
+  const userToDelete = await getUserById(id);
+  if (!userToDelete) {
+    return res.status(404).json({ message: 'Usuario nao encontrado.' });
+  }
+
+  // 1. Find all ministries where this user is the LEADER
+  const { data: ledMinistries } = await supabase
+    .from('ministries')
+    .select('id')
+    .eq('leader_id', id);
+
+  if (ledMinistries && ledMinistries.length > 0) {
+    for (const m of ledMinistries) {
+      // For each led ministry, perform the same cascade we do when deleting a ministry
+      const junctionTables = ['ministry_members', 'ministry_admins', 'ministry_ministers', 'ministry_repertoire'];
+      for (const table of junctionTables) {
+        await supabase.from(table).delete().eq('ministry_id', m.id);
+      }
+      await supabase.from('schedules').update({ music_ministry_id: null }).eq('music_ministry_id', m.id);
+      await supabase.from('ministries').delete().eq('id', m.id);
+    }
+  }
+
+  // 2. Remove user from all junction tables (memberships, admin rights, minister assignments)
+  const userJunctionTables = ['ministry_members', 'ministry_admins', 'ministry_ministers'];
+  for (const table of userJunctionTables) {
+    await supabase.from(table).delete().eq('user_id', id);
+  }
+
+  // 3. Cleanup schedules
+  // Delete schedules created by this user
+  await supabase.from('schedules').delete().eq('created_by_user_id', id);
+  // Nullify where they were assigned as music minister
+  await supabase.from('schedules').update({ music_minister_id: null, music_minister_name: 'Removido' }).eq('music_minister_id', id);
+
+  // 4. Finally, delete the user record itself
+  const { error: deleteError } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', id);
+
+  if (deleteError) {
+    throw new Error(deleteError.message);
+  }
+
+  return res.status(200).json({ message: 'Usuario e todos os dados relacionados foram excluidos com sucesso.' });
+}));
+
 app.get('/api/ministries', asyncHandler(async (_req, res) => {
   const { data, error } = await runMinistryQueryWithFallback((selectFields) => (
     supabase
