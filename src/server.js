@@ -414,10 +414,42 @@ async function checkScheduleConflicts(date, serviceTime, assignments, excludeSch
   if (schedulesError) {
     throw new Error(schedulesError.message);
   }
+
+  // Get unavailable members for this date
+  const memberIds = [];
+  assignments.forEach(assignment => {
+    assignment.members.forEach(member => {
+      if (member.memberId) memberIds.push(member.memberId);
+    });
+  });
+
+  let unavailableDates = [];
+  if (memberIds.length > 0) {
+    const { data: unavailabilities, error: unavailabilityError } = await supabase
+      .from('user_unavailable_dates')
+      .select('user_id, date')
+      .eq('date', date)
+      .in('user_id', memberIds);
+    
+    if (!unavailabilityError && unavailabilities) {
+      unavailableDates = unavailabilities;
+    }
+  }
   
   // Check each assignment for conflicts
   assignments.forEach(assignment => {
     assignment.members.forEach(member => {
+      // Check unavailability dates
+      const isUnavailable = unavailableDates.some(ud => ud.user_id === member.memberId);
+      if (isUnavailable) {
+        conflicts.push({
+          memberId: member.memberId,
+          memberName: member.memberName,
+          conflictingMinistry: assignment.ministryName,
+          message: `${member.memberName} marcou este dia como indisponível para escalas.`
+        });
+      }
+
       existingSchedules.forEach(existingSchedule => {
         if (overlapsServiceTime(existingSchedule.service_time, serviceTime)) {
           const existingAssignments = existingSchedule.assignments || [];
@@ -2668,6 +2700,81 @@ app.post('/api/ministries/:id/image', upload.single('image'), asyncHandler(async
 
   const updated = await getMinistryById(id);
   return res.status(200).json({ ministry: mapMinistry(updated) });
+}));
+
+// --- INDISPONIBILIDADES DE ESCALA ---
+
+// Ler datas indisponíveis (do próprio usuário ou de alguém se for líder/admin)
+app.get('/api/users/:userId/unavailable-dates', asyncHandler(async (req, res) => {
+  const actorId = String(req.query.actorId || '');
+  const { userId } = req.params;
+
+  if (!actorId) return res.status(401).json({ message: 'actorId e obrigatorio.' });
+
+  const { data, error } = await supabase
+    .from('user_unavailable_dates')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: true });
+
+  if (error) throw new Error(error.message);
+
+  return res.status(200).json(data);
+}));
+
+// Adicionar data indisponível
+app.post('/api/users/:userId/unavailable-dates', asyncHandler(async (req, res) => {
+  const actorId = String(req.body.actorId || req.query.actorId || '');
+  const { userId } = req.params;
+  const { date, reason } = req.body;
+
+  if (!actorId) return res.status(401).json({ message: 'actorId e obrigatorio.' });
+  if (actorId !== userId) {
+    const actorUser = await getUserById(actorId);
+    if (!actorUser || actorUser.role === 'membro') {
+      return res.status(403).json({ message: 'Nao autorizado' });
+    }
+  }
+
+  if (!date) return res.status(400).json({ message: 'A data é obrigatória.' });
+
+  const { data, error } = await supabase
+    .from('user_unavailable_dates')
+    .insert([{ user_id: userId, date, reason }])
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '23505') {
+       return res.status(400).json({ message: 'Data já está marcada como indisponível.'});
+    }
+    throw new Error(error.message);
+  }
+
+  return res.status(201).json(data);
+}));
+
+// Remover data indisponível
+app.delete('/api/users/:userId/unavailable-dates/:id', asyncHandler(async (req, res) => {
+  const actorId = String(req.query.actorId || '');
+  const { userId, id } = req.params;
+
+  if (!actorId) return res.status(401).json({ message: 'actorId e obrigatorio.' });
+  if (actorId !== userId) {
+    const actorUser = await getUserById(actorId);
+    if (!actorUser || actorUser.role === 'membro') {
+      return res.status(403).json({ message: 'Nao autorizado' });
+    }
+  }
+
+  const { error } = await supabase
+    .from('user_unavailable_dates')
+    .delete()
+    .match({ id, user_id: userId });
+
+  if (error) throw new Error(error.message);
+
+  return res.status(204).send();
 }));
 
 app.use((err, _req, res, _next) => {

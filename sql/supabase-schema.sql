@@ -278,3 +278,16 @@ CREATE INDEX IF NOT EXISTS idx_schedules_date ON schedules(date);
 CREATE INDEX IF NOT EXISTS idx_schedules_service_time ON schedules(service_time);
 CREATE INDEX IF NOT EXISTS idx_schedules_created_by ON schedules(created_by_user_id);
 CREATE INDEX IF NOT EXISTS idx_schedules_music_minister_id ON schedules(music_minister_id);
+
+CREATE TABLE IF NOT EXISTS user_unavailable_dates (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  date date NOT NULL,
+  reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_unavailable_dates_user_id ON user_unavailable_dates(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_unavailable_dates_date ON user_unavailable_dates(date);
+
