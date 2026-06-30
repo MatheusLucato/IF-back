@@ -8,11 +8,4 @@ const rangeQuerySchema = z.object({
   to: isoDate.optional(),
 }).passthrough();
 
-// Geração de IA (F10.3): feature + conteúdo-base. Permissivo, mas exige texto.
-const aiGenerateSchema = z.object({
-  feature: z.enum(['announcement', 'meeting_minutes', 'summary', 'custom']).optional(),
-  input: z.string().trim().min(1, 'Informe os tópicos ou o texto de base.').max(20000, 'Conteúdo muito longo.'),
-  instructions: z.string().trim().max(2000).optional(),
-}).passthrough();
-
-module.exports = { rangeQuerySchema, aiGenerateSchema };
+module.exports = { rangeQuerySchema };

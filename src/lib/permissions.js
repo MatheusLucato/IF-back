@@ -47,9 +47,6 @@ const MODULES = [
   // Inteligência (Fase 10): painel executivo + relatórios cruzados. KPIs e
   // relatórios financeiros ainda exigem `financeiro.read` (refino no handler).
   { key: 'relatorios', label: 'Painel & Relatórios', actions: ['read'], status: 'active' },
-  // IA (F10.3): ação `use` libera as gerações assistidas pela Claude. Plano/feature
-  // (F9.1) pode restringir depois.
-  { key: 'ia', label: 'Assistente de IA', actions: ['use'], status: 'active' },
 ];
 
 // Catálogo expandido (consumido por GET /api/permissions e pela matriz no front).
@@ -94,9 +91,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'ensino.read', 'ensino.write',
     'comunicacao.read', 'comunicacao.write',
     'secretaria.read',
-    // Inteligência (Onda 6): líderes acessam painel/relatórios e usam a IA.
+    // Inteligência (Onda 6): líderes acessam painel/relatórios.
     'relatorios.read',
-    'ia.use',
   ],
   membro: [
     'dashboard.read',

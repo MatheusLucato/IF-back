@@ -3,17 +3,16 @@ const { asyncHandler } = require('../lib/asyncHandler');
 const { validate } = require('../middleware/validate');
 const { requirePermission } = require('../middleware/requirePermission');
 const { getUserPermissions } = require('../services/permissionService');
-const { rangeQuerySchema, aiGenerateSchema } = require('../schemas/intelligenceSchemas');
+const { rangeQuerySchema } = require('../schemas/intelligenceSchemas');
 const dashboard = require('../services/dashboardService');
 const reports = require('../services/analyticsReportService');
-const ai = require('../services/aiService');
 
 const router = express.Router();
 
 // ============================================================================
-// INTELIGÊNCIA (Fase 10) — Painel executivo, Relatórios cruzados e Assistente IA.
-// Leitura de painel/relatórios: relatorios.read · IA: ia.use. KPIs e relatórios
-// financeiros são refinados pela permissão financeiro.read dentro do handler.
+// INTELIGÊNCIA (Fase 10) — Painel executivo e Relatórios cruzados.
+// Leitura de painel/relatórios: relatorios.read. KPIs e relatórios financeiros
+// são refinados pela permissão financeiro.read dentro do handler.
 // ============================================================================
 
 // Helper: o usuário pode ver dados financeiros?
@@ -54,18 +53,6 @@ router.get('/reports/:key/export.csv', requirePermission('relatorios.read'),
     res.set('Content-Type', 'text/csv; charset=utf-8');
     res.set('Content-Disposition', `attachment; filename="${req.params.key}.csv"`);
     return res.send(reports.toCsv(report));
-  }));
-
-// ------------------------------- F10.3 IA (Claude) -------------------------
-// Status do serviço (a UI esconde a aba quando não configurado).
-router.get('/ai/status', requirePermission('ia.use'),
-  asyncHandler(async (_req, res) => res.json({ configured: ai.isConfigured(), features: ai.listFeatures() })));
-
-router.post('/ai/generate', requirePermission('ia.use'),
-  validate(aiGenerateSchema),
-  asyncHandler(async (req, res) => {
-    const result = await ai.generate(req.churchId, req.user.id, req.body);
-    return res.json(result);
   }));
 
 module.exports = router;

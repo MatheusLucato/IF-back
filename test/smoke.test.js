@@ -54,7 +54,6 @@ test('rotas /api protegidas exigem autenticacao (401 sem token)', async () => {
     '/api/audit',
     '/api/dashboard/kpis',
     '/api/reports/catalog',
-    '/api/ai/status',
   ];
 
   for (const path of protectedPaths) {
