@@ -34,6 +34,8 @@ const MODULES = [
   { key: 'configuracoes', label: 'Configurações', actions: ['read', 'write'], status: 'active' },
   { key: 'papeis', label: 'Papéis & Permissões', actions: ['read', 'write'], status: 'active' },
   { key: 'membros', label: 'Membros (Pessoas)', actions: ['read', 'write', 'delete'], status: 'active' },
+  // Convites por link (0042): quem pode gerar/listar/revogar links de ingresso.
+  { key: 'convites', label: 'Convites', actions: ['read', 'write'], status: 'active' },
   { key: 'secretaria', label: 'Secretaria', actions: ['read', 'write'], status: 'active' },
   { key: 'eventos', label: 'Eventos', actions: ['read', 'write', 'delete'], status: 'active' },
   { key: 'ensino', label: 'Ensino (EBD)', actions: ['read', 'write', 'delete'], status: 'active' },

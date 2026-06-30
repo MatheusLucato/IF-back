@@ -50,6 +50,7 @@ test('rotas /api protegidas exigem autenticacao (401 sem token)', async () => {
     '/api/schedules',
     '/api/permissions',
     '/api/roles',
+    '/api/invites',
     '/api/audit',
     '/api/dashboard/kpis',
     '/api/reports/catalog',
@@ -71,8 +72,8 @@ test('erro de autenticacao usa o envelope padronizado { error: { code, message }
   assert.equal(typeof body.error.message, 'string');
 });
 
-test('rota publica POST /api/auth/register valida o corpo com zod (400 + details)', async () => {
-  const res = await fetch(`${baseUrl}/api/auth/register`, {
+test('rota publica POST /api/public/invites/:token/register valida o corpo com zod (400 + details)', async () => {
+  const res = await fetch(`${baseUrl}/api/public/invites/token-qualquer/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),

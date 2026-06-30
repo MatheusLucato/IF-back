@@ -14,6 +14,7 @@ const ministryRoutes = require('./routes/ministryRoutes');
 const musicRoutes = require('./routes/musicRoutes');
 const scheduleRoutes = require('./routes/scheduleRoutes');
 const memberRoutes = require('./routes/memberRoutes');
+const inviteLinkRoutes = require('./routes/inviteLinkRoutes');
 const familyRoutes = require('./routes/familyRoutes');
 const secretariaRoutes = require('./routes/secretariaRoutes');
 const eventRoutes = require('./routes/eventRoutes');
@@ -59,6 +60,7 @@ function createApp() {
   app.use('/api', musicRoutes);
   app.use('/api', scheduleRoutes);
   app.use('/api', memberRoutes);
+  app.use('/api', inviteLinkRoutes);
   app.use('/api', familyRoutes);
   app.use('/api', secretariaRoutes);
   app.use('/api', eventRoutes);

@@ -12,6 +12,7 @@ const ERROR_CODES = {
   UNAUTHENTICATED: 'UNAUTHENTICATED',
   FORBIDDEN: 'FORBIDDEN',
   NOT_FOUND: 'NOT_FOUND',
+  GONE: 'GONE',
   CONFLICT: 'CONFLICT',
   PRECONDITION_FAILED: 'PRECONDITION_FAILED',
   UPLOAD_ERROR: 'UPLOAD_ERROR',
@@ -47,6 +48,10 @@ class AppError extends Error {
 
   static notFound(message = 'Recurso nao encontrado.') {
     return new AppError(message, { status: 404, code: ERROR_CODES.NOT_FOUND });
+  }
+
+  static gone(message = 'Recurso nao esta mais disponivel.') {
+    return new AppError(message, { status: 410, code: ERROR_CODES.GONE });
   }
 
   static conflict(message, details) {

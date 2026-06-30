@@ -33,6 +33,9 @@ const AUDIT_ACTIONS = {
   MEMBER_INVITED: 'member.invited',
   MEMBER_INVITE_REVOKED: 'member.invite_revoked',
   MEMBER_ACCESS_LINKED: 'member.access_linked',
+  // Convites por link (0042)
+  INVITE_LINK_CREATED: 'invite_link.created',
+  INVITE_LINK_REVOKED: 'invite_link.revoked',
   // Secretaria (Fase 2)
   TEMPLATE_CREATED: 'document_template.created',
   TEMPLATE_UPDATED: 'document_template.updated',
@@ -85,6 +88,7 @@ const AUDIT_ENTITIES = {
   USER: 'user',
   ROLE: 'role',
   MEMBER: 'member',
+  INVITE_LINK: 'invite_link',
   DOCUMENT_TEMPLATE: 'document_template',
   ISSUED_DOCUMENT: 'issued_document',
   INSTITUTION_DOCUMENT: 'institution_document',

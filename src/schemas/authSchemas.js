@@ -1,16 +1,5 @@
 const { z, trimmedRequired, optionalString } = require('./common');
 
-// Cadastro de membro/lider em uma igreja existente. A validacao semantica da
-// data de nascimento (formato/limite) continua no handler via normalizeBirthDate.
-const registerSchema = z.object({
-  name: trimmedRequired('Nome e obrigatorio.'),
-  email: trimmedRequired('Email e obrigatorio.'),
-  password: trimmedRequired('Senha e obrigatoria.'),
-  birthDate: trimmedRequired('Data de nascimento e obrigatoria.'),
-  churchId: trimmedRequired('Selecione a igreja.'),
-  isLeader: z.boolean().optional(),
-});
-
 // Onboarding: cria tenant (igreja) + admin + identidade visual.
 const onboardingSchema = z.object({
   admin: z.object({
@@ -32,4 +21,4 @@ const onboardingSchema = z.object({
   }).passthrough().optional(),
 });
 
-module.exports = { registerSchema, onboardingSchema };
+module.exports = { onboardingSchema };

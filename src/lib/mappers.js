@@ -202,6 +202,32 @@ function mapInvitation(row) {
   };
 }
 
+// Link de convite reutilizável (0042). Deriva um `status` legível a partir das
+// flags/contadores para a UI de gestão.
+function mapInviteLink(row) {
+  if (!row) return null;
+  const expired = Boolean(row.expires_at) && new Date(row.expires_at) <= new Date();
+  const exhausted = row.max_uses != null && row.uses >= row.max_uses;
+  let status = 'active';
+  if (!row.is_active) status = 'revoked';
+  else if (expired) status = 'expired';
+  else if (exhausted) status = 'exhausted';
+  return {
+    id: row.id,
+    token: row.token,
+    label: row.label || null,
+    role: row.role,
+    maxUses: row.max_uses != null ? row.max_uses : null,
+    uses: row.uses || 0,
+    expiresAt: row.expires_at || null,
+    isActive: Boolean(row.is_active),
+    status,
+    createdBy: row.created_by || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || null,
+  };
+}
+
 function mapChurchSettings(row) {
   if (!row) return null;
   return {
@@ -709,6 +735,7 @@ module.exports = {
   mapFamilyMember,
   mapMemberEvent,
   mapInvitation,
+  mapInviteLink,
   mapDocumentTemplate,
   mapIssuedDocument,
   mapInstitutionDocument,

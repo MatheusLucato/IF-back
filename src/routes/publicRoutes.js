@@ -4,12 +4,14 @@ const { getSupabase } = require('../db');
 const { asyncHandler } = require('../lib/asyncHandler');
 const { AppError } = require('../lib/errors');
 const { validate } = require('../middleware/validate');
-const { registerSchema, onboardingSchema } = require('../schemas/authSchemas');
+const { onboardingSchema } = require('../schemas/authSchemas');
+const { inviteRegisterSchema } = require('../schemas/inviteLinkSchemas');
 const { USER_SELECT } = require('../lib/constants');
 const { mapChurch, mapUser } = require('../lib/mappers');
-const { slugify, normalizeBirthDate } = require('../lib/normalizers');
+const { slugify } = require('../lib/normalizers');
 const { getChurchBundle, createAuthUser } = require('../services/churchService');
 const { ensureMemberForUser } = require('../services/memberService');
+const { getInviteByToken, registerViaInvite } = require('../services/inviteLinkService');
 const { publicRegistrationSchema } = require('../schemas/eventSchemas');
 const eventService = require('../services/eventService');
 
@@ -42,19 +44,19 @@ router.get('/', (_req, res) => {
   });
 });
 
-// PUBLICO: lista de igrejas (para o membro escolher a sua no cadastro/login).
-router.get('/api/public/churches', asyncHandler(async (_req, res) => {
-  const { data, error } = await supabase
-    .from('churches')
-    .select('id,name,trade_name,city,state,slug')
-    .eq('status', 'active')
-    .order('name', { ascending: true });
-  if (error) throw new Error(error.message);
-  return res.json({
-    churches: (data || []).map((c) => ({
-      id: c.id, name: c.trade_name || c.name, city: c.city, state: c.state, slug: c.slug,
-    })),
-  });
+// PUBLICO: resolve um convite por token (cadastro por LINK, 0042). Só devolve a
+// identidade da igreja que está convidando — nenhuma outra igreja é exposta.
+// 404 = token inexistente; 410 = convite expirado/esgotado/revogado.
+router.get('/api/public/invites/:token', asyncHandler(async (req, res) => {
+  const invite = await getInviteByToken(req.params.token);
+  return res.json(invite);
+}));
+
+// PUBLICO: cadastro pessoal a partir de um convite. A igreja vem do token; o
+// cliente nunca informa churchId. A conta nasce vinculada e aprovada.
+router.post('/api/public/invites/:token/register', validate(inviteRegisterSchema), asyncHandler(async (req, res) => {
+  const user = await registerViaInvite(req.params.token, req.body);
+  return res.status(201).json({ user });
 }));
 
 // PUBLICO: resolve o tenant pelo HOST (F9.3). A SPA chama no boot quando servida
@@ -227,58 +229,6 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
   await ensureMemberForUser(createdUser, createdChurch.id);
 
   return res.status(201).json({ church: mapChurch(createdChurch), user: mapUser(createdUser) });
-}));
-
-// PUBLICO: cadastro de membro/lider em uma igreja existente.
-router.post('/api/auth/register', validate(registerSchema), asyncHandler(async (req, res) => {
-  const { name, email, password, isLeader, birthDate, churchId } = req.body;
-
-  const normalizedBirthDate = normalizeBirthDate(birthDate);
-  if (!normalizedBirthDate) {
-    throw AppError.badRequest('Data de nascimento invalida. Use o formato YYYY-MM-DD.');
-  }
-  if (new Date(`${normalizedBirthDate}T00:00:00Z`) > new Date()) {
-    throw AppError.badRequest('Data de nascimento nao pode ser no futuro.');
-  }
-
-  const { data: church } = await supabase.from('churches').select('id').eq('id', churchId).maybeSingle();
-  if (!church) {
-    throw AppError.notFound('Igreja nao encontrada.');
-  }
-
-  const normalizedEmail = String(email).trim().toLowerCase();
-  const { data: existing } = await supabase
-    .from('users').select('id').eq('email', normalizedEmail).eq('church_id', churchId).limit(1);
-  if (existing && existing.length > 0) {
-    throw AppError.conflict('Email ja cadastrado nesta igreja.');
-  }
-
-  const authUser = await createAuthUser(normalizedEmail, String(password));
-
-  const role = isLeader ? 'lider' : 'membro';
-  const safeName = String(name).trim();
-  const { data: created, error: createError } = await supabase
-    .from('users')
-    .insert({
-      id: randomUUID(),
-      name: safeName,
-      full_name: safeName,
-      email: normalizedEmail,
-      password_hash: 'supabase-auth',
-      birth_date: normalizedBirthDate,
-      role,
-      is_approved: role === 'lider' ? false : true,
-      auth_user_id: authUser.id,
-      church_id: churchId,
-    })
-    .select(USER_SELECT)
-    .single();
-  if (createError) throw new Error(createError.message);
-
-  // Invariante "1 user ⇒ 1 member" (F1.1): cria a pessoa correspondente.
-  await ensureMemberForUser(created, churchId);
-
-  return res.status(201).json({ user: mapUser(created) });
 }));
 
 module.exports = router;
