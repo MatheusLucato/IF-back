@@ -4,6 +4,7 @@ const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const rawSupabaseSecretKey = (process.env.SUPABASE_SECRET_KEY || '').trim();
+const SUPABASE_ANON_KEY = (process.env.SUPABASE_ANON_KEY || '').trim();
 
 function parseCompositeSecretKey(value) {
   if (!value) return { projectRefOrUrl: '', secretKey: '' };
@@ -56,6 +57,9 @@ if (!SUPABASE_URL) {
   throw new Error('Defina SUPABASE_SECRET_KEY no formato "project_ref|sb_secret_..." (ou "https://projeto.supabase.co|sb_secret_...").');
 }
 
+// Cliente ADMIN (service-role): ignora o RLS. Usado para operações privilegiadas
+// do backend (autenticação, criação de tenants, jobs). O isolamento por tenant
+// é garantido no código via church_id (ver middleware/auth.js).
 const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
   auth: {
     autoRefreshToken: false,
@@ -63,37 +67,96 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY, {
   },
 });
 
-async function ensureDefaultAdmin() {
+// Cliente por-requisição vinculado ao JWT do usuário: respeita o RLS.
+// Use quando quiser que o banco aplique o isolamento de tenant (defesa em
+// profundidade) além do scoping em código.
+function createUserClientFromToken(accessToken) {
+  if (!SUPABASE_ANON_KEY) {
+    throw new Error('SUPABASE_ANON_KEY e obrigatoria para criar clientes por usuario (RLS).');
+  }
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+// Valida o access token do Supabase e devolve o usuário do auth.users.
+async function getAuthUserFromToken(accessToken) {
+  if (!accessToken) return null;
+  const { data, error } = await supabase.auth.getUser(accessToken);
+  if (error || !data?.user) return null;
+  return data.user;
+}
+
+const DEFAULT_CHURCH_SLUG = 'igreja-familia';
+
+async function ensureDefaultChurch() {
+  const { data: existing, error } = await supabase
+    .from('churches')
+    .select('id')
+    .eq('slug', DEFAULT_CHURCH_SLUG)
+    .maybeSingle();
+
+  if (error) throw new Error(`Falha ao consultar igreja padrao: ${error.message}`);
+  if (existing) return existing.id;
+
+  const { data: created, error: insertError } = await supabase
+    .from('churches')
+    .insert({ name: 'Igreja Família', trade_name: 'Igreja Família', slug: DEFAULT_CHURCH_SLUG, country: 'Brasil' })
+    .select('id')
+    .single();
+
+  if (insertError) throw new Error(`Falha ao criar igreja padrao: ${insertError.message}`);
+
+  await supabase.from('church_settings').insert({ church_id: created.id }).select('church_id').maybeSingle();
+  return created.id;
+}
+
+// Garante um admin padrão usando Supabase Auth (cria o auth user + o profile
+// vinculado via auth_user_id), de forma idempotente.
+async function ensureDefaultAdmin(defaultChurchId) {
   const email = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@igrejafamilia.com').trim().toLowerCase();
   const password = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
 
-  const { data: existing, error: existingError } = await supabase
-    .from('users')
-    .select('id')
-    .eq('email', email)
-    .limit(1);
-
-  if (existingError) {
-    throw new Error(`Falha ao consultar usuario admin: ${existingError.message}`);
-  }
-
-  if (existing && existing.length > 0) {
-    return;
-  }
-
-  const { error: insertError } = await supabase.from('users').insert({
-    id: randomUUID(),
-    name: 'Admin',
-    full_name: 'Admin',
+  // 1. Garante o usuário no Supabase Auth.
+  let authUserId = null;
+  const { data: createdAuth, error: createAuthError } = await supabase.auth.admin.createUser({
     email,
     password,
-    password_hash: password,
-    role: 'admin',
-    is_approved: true,
+    email_confirm: true,
   });
 
-  if (insertError) {
-    throw new Error(`Falha ao criar admin padrao: ${insertError.message}`);
+  if (createdAuth?.user) {
+    authUserId = createdAuth.user.id;
+  } else if (createAuthError && /already.*registered|exists/i.test(createAuthError.message || '')) {
+    // Já existe no auth: localiza o id paginando os usuários.
+    const { data: list } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    authUserId = list?.users?.find((u) => (u.email || '').toLowerCase() === email)?.id || null;
+  } else if (createAuthError) {
+    throw new Error(`Falha ao criar admin no Supabase Auth: ${createAuthError.message}`);
+  }
+
+  // 2. Garante o profile (users) vinculado.
+  const { data: profile } = await supabase
+    .from('users')
+    .select('id,auth_user_id,church_id')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (!profile) {
+    await supabase.from('users').insert({
+      id: randomUUID(),
+      name: 'Admin',
+      full_name: 'Admin',
+      email,
+      password_hash: 'supabase-auth',
+      role: 'admin',
+      is_approved: true,
+      auth_user_id: authUserId,
+      church_id: defaultChurchId,
+    });
+  } else if (!profile.auth_user_id && authUserId) {
+    await supabase.from('users').update({ auth_user_id: authUserId, church_id: profile.church_id || defaultChurchId }).eq('id', profile.id);
   }
 }
 
@@ -103,7 +166,8 @@ async function initConnection() {
     throw new Error(`Falha ao conectar no Supabase: ${error.message}`);
   }
 
-  await ensureDefaultAdmin();
+  const defaultChurchId = await ensureDefaultChurch();
+  await ensureDefaultAdmin(defaultChurchId);
 }
 
 function getSupabase() {
@@ -112,5 +176,9 @@ function getSupabase() {
 
 module.exports = {
   getSupabase,
+  createUserClientFromToken,
+  getAuthUserFromToken,
   initConnection,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
 };

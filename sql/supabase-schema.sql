@@ -1,3 +1,10 @@
+-- =============================================================================
+-- [SUPERADO — HISTÓRICO] Este arquivo foi consolidado na baseline versionada
+-- em ../supabase/migrations/0001_baseline.sql (fase F0.2). Mantido apenas como
+-- referência histórica. NÃO é mais a fonte de verdade do schema — para criar/
+-- evoluir o banco, use as migrations (ver ../supabase/migrations/README.md).
+-- =============================================================================
+
 -- Execute no SQL Editor do Supabase
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
