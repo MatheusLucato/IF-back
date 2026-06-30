@@ -17,7 +17,6 @@ function mapUser(row) {
     name: row.name || row.full_name,
     email: row.email,
     role: row.role,
-    isApproved: row.is_approved,
     profilePicture: row.profile_picture,
     birthDate: row.birth_date,
     themePreference: row.theme_preference || 'light',
@@ -32,7 +31,6 @@ function mapLeader(row) {
     id: row.id,
     name: row.name || row.full_name,
     role: row.role,
-    isApproved: row.is_approved,
   };
 }
 

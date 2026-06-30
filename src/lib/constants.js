@@ -1,6 +1,6 @@
 // Colunas selecionadas em consultas recorrentes. Centralizado para manter o
 // mesmo "shape" de retorno em todos os routers/services.
-const USER_SELECT = 'id,name,full_name,email,role,is_approved,profile_picture,birth_date,theme_preference,created_at';
+const USER_SELECT = 'id,name,full_name,email,role,profile_picture,birth_date,theme_preference,created_at';
 const MINISTRY_SELECT_BASE = 'id,name,leader_id,managers,member_count,color,image_url,is_music_ministry,functions,repertoire,created_at';
 const MINISTRY_SELECT_WITH_TEAMS = `${MINISTRY_SELECT_BASE},teams`;
 

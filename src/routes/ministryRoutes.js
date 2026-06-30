@@ -346,7 +346,7 @@ router.patch('/ministries/:id/leaders', validate(updateLeadersSchema), asyncHand
 
     const validIds = new Set(
       (candidates || [])
-        .filter((item) => item.role === 'membro' || (item.role === 'lider' && item.is_approved))
+        .filter((item) => item.role === 'membro' || item.role === 'lider')
         .map((item) => item.id)
     );
     const invalid = uniqueLeaderIds.filter((candidateId) => !validIds.has(candidateId));

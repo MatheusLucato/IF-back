@@ -85,13 +85,13 @@ async function insertMinistry(payload) {
 function isLeaderEligible(user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  return user.role === 'lider' && user.is_approved;
+  return user.role === 'lider';
 }
 
 async function canCreateMinistry(user) {
   if (!user) return false;
   if (user.role === 'admin') return true;
-  if (!(user.role === 'lider' && user.is_approved)) return false;
+  if (user.role !== 'lider') return false;
 
   const { data: createdMinistries, error: createdError } = await supabase
     .from('ministries')
@@ -355,7 +355,7 @@ async function enrichMinistries(rows) {
   if (userIds.length > 0) {
     const { data: users, error } = await supabase
       .from('users')
-      .select('id,name,full_name,role,is_approved')
+      .select('id,name,full_name,role')
       .in('id', userIds);
 
     if (error) {

@@ -151,7 +151,6 @@ async function ensureDefaultAdmin(defaultChurchId) {
       email,
       password_hash: 'supabase-auth',
       role: 'admin',
-      is_approved: true,
       auth_user_id: authUserId,
       church_id: defaultChurchId,
     });
