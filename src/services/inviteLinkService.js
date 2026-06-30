@@ -162,7 +162,6 @@ async function registerViaInvite(token, { name, email, password, birthDate }) {
       password_hash: 'supabase-auth',
       birth_date: normalizedBirthDate,
       role: invite.role,
-      is_approved: true,
       auth_user_id: authUser.id,
       church_id: churchId,
     })

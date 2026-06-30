@@ -217,7 +217,6 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
       email,
       password_hash: 'supabase-auth',
       role: 'admin',
-      is_approved: true,
       auth_user_id: authUser.id,
       church_id: createdChurch.id,
     })

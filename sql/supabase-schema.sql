@@ -30,7 +30,6 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash text NOT NULL,
   birth_date date,
   role user_role NOT NULL DEFAULT 'membro',
-  is_approved boolean NOT NULL DEFAULT false,
   profile_picture text,
   theme_preference theme_preference NOT NULL DEFAULT 'light',
   created_at timestamptz NOT NULL DEFAULT now()
@@ -43,7 +42,6 @@ ALTER TABLE users
   ADD COLUMN IF NOT EXISTS password_hash text,
   ADD COLUMN IF NOT EXISTS birth_date date,
   ADD COLUMN IF NOT EXISTS role user_role DEFAULT 'membro',
-  ADD COLUMN IF NOT EXISTS is_approved boolean DEFAULT false,
   ADD COLUMN IF NOT EXISTS profile_picture text,
   ADD COLUMN IF NOT EXISTS theme_preference theme_preference DEFAULT 'light',
   ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT now();
@@ -101,10 +99,6 @@ UPDATE users
 SET role = 'membro'
 WHERE role IS NULL;
 
-UPDATE users
-SET is_approved = false
-WHERE is_approved IS NULL;
-
 ALTER TABLE users
   ALTER COLUMN name SET NOT NULL,
   ALTER COLUMN full_name SET NOT NULL,
@@ -112,8 +106,6 @@ ALTER TABLE users
   ALTER COLUMN password_hash SET NOT NULL,
   ALTER COLUMN role SET DEFAULT 'membro',
   ALTER COLUMN role SET NOT NULL,
-  ALTER COLUMN is_approved SET DEFAULT false,
-  ALTER COLUMN is_approved SET NOT NULL,
   ALTER COLUMN theme_preference SET DEFAULT 'light',
   ALTER COLUMN theme_preference SET NOT NULL,
   ALTER COLUMN created_at SET DEFAULT now();

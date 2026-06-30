@@ -18,8 +18,6 @@ function isMissingAuditSchema(error) {
 // pessoas, gestao de papeis); financas entram com suas proprias acoes na Fase 5.
 const AUDIT_ACTIONS = {
   USER_ROLE_CHANGED: 'user.role_changed',
-  USER_APPROVED: 'user.approved',
-  USER_REJECTED: 'user.rejected',
   USER_DELETED: 'user.deleted',
   USER_ROLE_ASSIGNED: 'user.role_assigned',
   ROLE_CREATED: 'role.created',

@@ -3,7 +3,7 @@ const { AppError } = require('../lib/errors');
 
 const supabase = getSupabase();
 
-const PROFILE_SELECT = 'id,name,full_name,email,role,is_approved,church_id,auth_user_id,profile_picture,birth_date,theme_preference,created_at';
+const PROFILE_SELECT = 'id,name,full_name,email,role,church_id,auth_user_id,profile_picture,birth_date,theme_preference,created_at';
 // `role_id` (RBAC, F0.6) é carregado quando a coluna existir. Como o SQL é
 // aplicado manualmente, toleramos a coluna ausente (migração 0002 não rodada):
 // nesse caso o profile vem sem role_id e o resolvedor de permissões usa o mapa
@@ -87,14 +87,6 @@ async function authenticate(req, res, next) {
   }
 }
 
-// Exige que o usuário esteja aprovado (líderes pendentes ficam de fora).
-function requireApproved(req, _res, next) {
-  if (req.user && req.user.is_approved === false) {
-    return next(AppError.forbidden('Conta pendente de aprovacao.'));
-  }
-  return next();
-}
-
 // Restringe a rota a determinados papéis dentro da igreja.
 function requireRole(...roles) {
   return (req, _res, next) => {
@@ -105,4 +97,4 @@ function requireRole(...roles) {
   };
 }
 
-module.exports = { authenticate, requireApproved, requireRole };
+module.exports = { authenticate, requireRole };

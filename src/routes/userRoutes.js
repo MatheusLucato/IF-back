@@ -98,7 +98,7 @@ router.get('/users/leaders', asyncHandler(async (req, res) => {
 
   const leaders = (data || [])
     .map(mapUser)
-    .filter((candidate) => candidate.role === 'membro' || (candidate.role === 'lider' && candidate.isApproved));
+    .filter((candidate) => candidate.role === 'membro' || candidate.role === 'lider');
 
   return res.json({ users: leaders });
 }));
@@ -180,9 +180,6 @@ router.patch('/users/:id/role', validate(updateUserRoleSchema), asyncHandler(asy
   const previous = await getUserById(id, req.churchId);
 
   const payload = { role };
-  if (role !== 'lider') {
-    payload.is_approved = true;
-  }
 
   const { data, error } = await supabase
     .from('users')
@@ -204,83 +201,11 @@ router.patch('/users/:id/role', validate(updateUserRoleSchema), asyncHandler(asy
     action: AUDIT_ACTIONS.USER_ROLE_CHANGED,
     entity: AUDIT_ENTITIES.USER,
     entityId: id,
-    before: { role: previous ? previous.role : null, isApproved: previous ? previous.is_approved : null },
-    after: { role: data.role, isApproved: data.is_approved },
+    before: { role: previous ? previous.role : null },
+    after: { role: data.role },
   });
 
   return res.json({ user: mapUser(data) });
-}));
-
-router.post('/users/:id/approve', asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  if (req.user.role !== 'admin') {
-    throw AppError.forbidden('Apenas o administrador pode aprovar lideres.');
-  }
-
-  const { data, error } = await supabase
-    .from('users')
-    .update({ is_approved: true })
-    .eq('id', id)
-    .eq('church_id', req.churchId)
-    .eq('role', 'lider')
-    .select(USER_SELECT)
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  if (!data) {
-    throw AppError.notFound('Lider nao encontrado.');
-  }
-
-  await recordAudit(req, {
-    action: AUDIT_ACTIONS.USER_APPROVED,
-    entity: AUDIT_ENTITIES.USER,
-    entityId: id,
-    after: { name: data.name || data.full_name, email: data.email, role: data.role, isApproved: true },
-  });
-
-  return res.json({ user: mapUser(data) });
-}));
-
-router.delete('/users/:id/reject', asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  if (req.user.role !== 'admin') {
-    throw AppError.forbidden('Apenas o administrador pode rejeitar cadastros.');
-  }
-
-  // Snapshot antes de excluir (a linha some — preservamos a identidade na trilha).
-  const rejected = await getUserById(id, req.churchId);
-
-  const { data, error } = await supabase
-    .from('users')
-    .delete()
-    .eq('id', id)
-    .eq('church_id', req.churchId)
-    .select('id')
-    .maybeSingle();
-
-  if (error) {
-    throw new Error(error.message);
-  }
-
-  if (!data) {
-    throw AppError.notFound('Usuario nao encontrado.');
-  }
-
-  await recordAudit(req, {
-    action: AUDIT_ACTIONS.USER_REJECTED,
-    entity: AUDIT_ENTITIES.USER,
-    entityId: id,
-    before: rejected
-      ? { name: rejected.name || rejected.full_name, email: rejected.email, role: rejected.role }
-      : null,
-  });
-
-  return res.status(204).send();
 }));
 
 router.delete('/users/:id', asyncHandler(async (req, res) => {
