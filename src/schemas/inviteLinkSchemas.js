@@ -9,14 +9,18 @@ const createInviteLinkSchema = z.object({
   expiresInDays: z.number().int().positive().optional(),
 }).passthrough();
 
-// Cadastro público via convite: apenas dados pessoais. A igreja vem do token na
-// URL — o cliente nunca informa churchId. A validação semântica da data de
-// nascimento continua no service (normalizeBirthDate).
+// Cadastro público via convite: dados pessoais essenciais. A igreja vem do token
+// na URL — o cliente nunca informa churchId. A validação semântica da data de
+// nascimento continua no service (normalizeBirthDate). Gênero, telefone e CPF
+// são obrigatórios para que o cadastro nasça com os dados essenciais preenchidos.
 const inviteRegisterSchema = z.object({
   name: trimmedRequired('Nome e obrigatorio.'),
   email: trimmedRequired('Email e obrigatorio.'),
   password: trimmedRequired('Senha e obrigatoria.'),
   birthDate: trimmedRequired('Data de nascimento e obrigatoria.'),
+  gender: z.enum(['male', 'female', 'other'], { message: 'Genero e obrigatorio.' }),
+  phone: trimmedRequired('Telefone e obrigatorio.'),
+  cpf: trimmedRequired('CPF e obrigatorio.'),
 }).passthrough();
 
 module.exports = { createInviteLinkSchema, inviteRegisterSchema };

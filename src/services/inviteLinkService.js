@@ -125,7 +125,7 @@ async function getInviteByToken(token) {
 // Cria a conta (auth + users + member) já vinculada à igreja do convite e
 // consome um uso do link de forma atômica. O convite é a autorização: a conta
 // nasce aprovada com o papel padrão do link.
-async function registerViaInvite(token, { name, email, password, birthDate }) {
+async function registerViaInvite(token, { name, email, password, birthDate, gender, phone, cpf }) {
   const invite = await getInviteRowByToken(token);
   if (!invite) throw AppError.notFound('Convite não encontrado.');
   if (!isLinkUsable(invite)) {
@@ -139,6 +139,15 @@ async function registerViaInvite(token, { name, email, password, birthDate }) {
   if (new Date(`${normalizedBirthDate}T00:00:00Z`) > new Date()) {
     throw AppError.badRequest('Data de nascimento nao pode ser no futuro.');
   }
+
+  // Campos essenciais exigidos no cadastro: garantem que a pessoa nasça com o
+  // perfil preenchido (o restante fica opcional e aparece como "Não informado").
+  const normalizedGender = ['male', 'female', 'other'].includes(gender) ? gender : null;
+  if (!normalizedGender) throw AppError.badRequest('Genero invalido.');
+  const normalizedPhone = String(phone || '').trim();
+  if (!normalizedPhone) throw AppError.badRequest('Telefone e obrigatorio.');
+  const normalizedCpf = String(cpf || '').trim();
+  if (!normalizedCpf) throw AppError.badRequest('CPF e obrigatorio.');
 
   const churchId = invite.church_id;
   const normalizedEmail = String(email).trim().toLowerCase();
@@ -169,8 +178,13 @@ async function registerViaInvite(token, { name, email, password, birthDate }) {
     .single();
   if (createError) throw new Error(createError.message);
 
-  // Invariante "1 user ⇒ 1 member" (F1.1): cria a pessoa correspondente.
-  await ensureMemberForUser(created, churchId);
+  // Invariante "1 user ⇒ 1 member" (F1.1): cria a pessoa correspondente já com
+  // os dados essenciais coletados no cadastro.
+  await ensureMemberForUser(created, churchId, {
+    gender: normalizedGender,
+    phone: normalizedPhone,
+    cpf: normalizedCpf,
+  });
 
   // Consome um uso do link de forma atômica (respeita limite/expiração).
   const { error: consumeError } = await supabase.rpc('consume_invite_link', { p_token: token });
