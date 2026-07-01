@@ -6,7 +6,7 @@ const { z, trimmedRequired } = require('./common');
 
 // --- Domínio (valores válidos; fonte única reusada pelo service e pelo front) ---
 const MEMBERSHIP_STATUSES = ['visitor', 'regular_attender', 'member', 'inactive', 'transferred', 'deceased'];
-const GENDERS = ['male', 'female', 'other'];
+const GENDERS = ['male', 'female'];
 const MARITAL_STATUSES = ['single', 'married', 'divorced', 'widowed', 'stable_union'];
 const FAMILY_ROLES = ['head', 'spouse', 'child', 'relative', 'other'];
 const MEMBER_EVENT_TYPES = [

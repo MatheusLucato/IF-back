@@ -13,6 +13,28 @@ function sanitizeSearchTerm(term) {
   return String(term || '').replace(/[(),]/g, ' ').trim();
 }
 
+// Anexa o cargo/papel (users.role) do login vinculado a cada membro da lista.
+// BEST-EFFORT: se a consulta falhar, os membros ficam sem `userRole` (null) e a
+// listagem continua funcionando normalmente.
+async function attachUserRoles(members) {
+  const userIds = [...new Set(members.filter((m) => m && m.userId).map((m) => m.userId))];
+  if (userIds.length === 0) return members;
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id,role')
+      .in('id', userIds);
+    if (error || !data) return members;
+    const roleById = new Map(data.map((u) => [u.id, u.role]));
+    for (const m of members) {
+      if (m && m.userId) m.userRole = roleById.get(m.userId) || null;
+    }
+  } catch {
+    // silencioso: cargo é informação complementar.
+  }
+  return members;
+}
+
 // Converte o payload da API (camelCase, address aninhado) para colunas do banco
 // (snake_case). `partial` apenas documenta a intenção — em ambos os casos só
 // gravamos as chaves presentes no input (update parcial seguro).
@@ -97,12 +119,29 @@ async function listMembers(churchId, { search, status, gender, hasAccess, active
   if (isMissingRelation(error)) throw migrationPending(MEMBERS_MIGRATION);
   if (error) throw new Error(error.message);
 
+  const members = (data || []).map(mapMember);
+  await attachUserRoles(members);
+
   return {
-    members: (data || []).map(mapMember),
+    members,
     total: count ?? null,
     page,
     pageSize,
   };
+}
+
+// Verifica se o membro está vinculado ao usuário administrador da igreja.
+// O admin (role='admin') é o dono da conta e não pode ser excluído nem
+// anonimizado pela tela de pessoas — protege contra ficar sem administrador.
+async function isMemberLinkedToAdmin(userId, churchId) {
+  if (!userId) return false;
+  const { data } = await supabase
+    .from('users')
+    .select('role')
+    .eq('id', userId)
+    .eq('church_id', churchId)
+    .maybeSingle();
+  return data?.role === 'admin';
 }
 
 // Busca a linha bruta (uso interno: auditoria, integrações).
@@ -128,6 +167,9 @@ async function getMemberDetail(memberId, churchId) {
   const member = mapMember(row);
   member.families = await getMemberFamilies(memberId, churchId);
   member.ministries = await getMemberMinistries(row.user_id, churchId);
+  // Sinaliza para a UI esconder as ações destrutivas (excluir/anonimizar).
+  member.isAdmin = await isMemberLinkedToAdmin(row.user_id, churchId);
+  await attachUserRoles([member]);
   return member;
 }
 
@@ -360,6 +402,7 @@ async function createMemberEvent(memberId, churchId, input, createdBy) {
 module.exports = {
   buildMemberDbPayload,
   ensureMemberForUser,
+  isMemberLinkedToAdmin,
   listMembers,
   getMemberRow,
   getMemberDetail,

@@ -1,9 +1,11 @@
 const express = require('express');
 const { z } = require('../schemas/common');
 const { asyncHandler } = require('../lib/asyncHandler');
+const { AppError } = require('../lib/errors');
 const { validate } = require('../middleware/validate');
 const { requirePermission } = require('../middleware/requirePermission');
 const lgpd = require('../services/lgpdService');
+const { getMemberRow, isMemberLinkedToAdmin } = require('../services/memberService');
 const { recordAudit, AUDIT_ACTIONS, AUDIT_ENTITIES } = require('../services/auditService');
 
 const router = express.Router();
@@ -41,6 +43,12 @@ router.post('/me/consents', validate(consentSchema), asyncHandler(async (req, re
 
 // Anonimização de um membro (admin / direito ao esquecimento).
 router.post('/members/:id/anonymize', requirePermission('membros.delete'), asyncHandler(async (req, res) => {
+  // O administrador da igreja não pode ser anonimizado (apagaria o dono da conta).
+  const existing = await getMemberRow(req.params.id, req.churchId);
+  if (existing && await isMemberLinkedToAdmin(existing.user_id, req.churchId)) {
+    throw AppError.forbidden('O administrador da igreja não pode ser anonimizado.');
+  }
+
   const { before, member } = await lgpd.anonymizeMember(req.params.id, req.churchId);
   await recordAudit(req, {
     action: AUDIT_ACTIONS.MEMBER_ANONYMIZED, entity: AUDIT_ENTITIES.MEMBER, entityId: req.params.id,

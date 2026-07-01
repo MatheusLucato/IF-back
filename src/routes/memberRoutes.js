@@ -18,6 +18,7 @@ const {
   listMembers,
   getMemberDetail,
   getMemberRow,
+  isMemberLinkedToAdmin,
   updateMember,
   deleteMember,
   listBirthdays,
@@ -96,6 +97,11 @@ router.delete(
   asyncHandler(async (req, res) => {
     const existing = await getMemberRow(req.params.id, req.churchId);
     if (!existing) throw AppError.notFound('Pessoa não encontrada.');
+
+    // O administrador da igreja não pode ser excluído pela tela de pessoas.
+    if (await isMemberLinkedToAdmin(existing.user_id, req.churchId)) {
+      throw AppError.forbidden('O administrador da igreja não pode ser excluído.');
+    }
 
     await deleteMember(req.params.id, req.churchId);
     await recordAudit(req, {

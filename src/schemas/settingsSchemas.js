@@ -1,8 +1,10 @@
 const { z, optionalString } = require('./common');
 const { validateThemeColors, PRIMARY_MIN_ON_BG, SECONDARY_MIN_ON_BG } = require('../lib/themeValidation');
 const { isValidHex, normalizeHex, contrastRatio } = require('../lib/color');
+const { isValidCnpj, isValidPhone } = require('../lib/documents');
 
 const isNonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const WHITE = '#ffffff';
 
 // Atualizacao das configuracoes da igreja (dados cadastrais + identidade visual).
@@ -39,8 +41,29 @@ const updateSettingsSchema = z.object({
   dateFormat: optionalString,
   settings: z.record(z.string(), z.unknown()).optional(),
 }).passthrough().superRefine((data, ctx) => {
-  // colorButton tem precedencia (cor que de fato pinta a UI no modelo de 2 cores).
-  const primary = isNonEmpty(data.colorButton) ? data.colorButton : data.colorPrimary;
+  // Validação de documentos/contatos quando informados (PATCH parcial). A
+  // unicidade do CNPJ é garantida no handler + índice funcional (migration 0045).
+  if (isNonEmpty(data.cnpj) && !isValidCnpj(data.cnpj)) {
+    ctx.addIssue({ code: 'custom', path: ['cnpj'], message: 'CNPJ invalido.' });
+  }
+  if (isNonEmpty(data.email) && !EMAIL_RE.test(data.email.trim())) {
+    ctx.addIssue({ code: 'custom', path: ['email'], message: 'Email invalido.' });
+  }
+  if (isNonEmpty(data.phone) && !isValidPhone(data.phone)) {
+    ctx.addIssue({ code: 'custom', path: ['phone'], message: 'Telefone invalido.' });
+  }
+  // WhatsApp e obrigatorio. Como este e um PATCH parcial, so exigimos quando a
+  // chave vem no payload (a tela de Configuracoes sempre envia); atualizacoes
+  // parciais que nao tocam o contato seguem passando.
+  if (data.whatsapp !== undefined && !isNonEmpty(data.whatsapp)) {
+    ctx.addIssue({ code: 'custom', path: ['whatsapp'], message: 'WhatsApp e obrigatorio.' });
+  } else if (isNonEmpty(data.whatsapp) && !isValidPhone(data.whatsapp)) {
+    ctx.addIssue({ code: 'custom', path: ['whatsapp'], message: 'WhatsApp invalido.' });
+  }
+
+  // colorPrimary e a fonte da verdade no modelo de 2 cores; colorButton (legado) so
+  // entra como fallback. Alinhado com IF-front/src/lib/theme.ts.
+  const primary = isNonEmpty(data.colorPrimary) ? data.colorPrimary : data.colorButton;
   const hasPrimary = isNonEmpty(primary);
   const hasSecondary = isNonEmpty(data.colorSecondary);
   if (!hasPrimary && !hasSecondary) return; // PATCH nao mexe no tema

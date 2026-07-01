@@ -9,6 +9,7 @@ const { inviteRegisterSchema } = require('../schemas/inviteLinkSchemas');
 const { USER_SELECT } = require('../lib/constants');
 const { mapChurch, mapUser } = require('../lib/mappers');
 const { slugify } = require('../lib/normalizers');
+const { onlyDigits, isValidCnpj, formatCnpj, formatPhone, formatCpf } = require('../lib/documents');
 const { getChurchBundle, createAuthUser } = require('../services/churchService');
 const { ensureMemberForUser } = require('../services/memberService');
 const { seedSystemRolesForChurch } = require('../services/permissionService');
@@ -184,20 +185,38 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
   // 1. Auth user (Supabase Auth)
   const authUser = await createAuthUser(email, String(admin.password));
 
-  // 2. Igreja (tenant)
+  // 2. Igreja (tenant). CNPJ é único entre todas as igrejas: normaliza p/ dígitos,
+  // formata de forma canônica e checa duplicidade antes de inserir (mensagem
+  // amigável). A garantia dura é o índice funcional por dígitos (migration 0045);
+  // por isso também tratamos o 23505 como conflito (corrida entre 2 cadastros).
+  const cnpjDigits = onlyDigits(church.cnpj);
+  if (!isValidCnpj(cnpjDigits)) throw AppError.badRequest('CNPJ inválido.');
+  const cnpjFormatted = formatCnpj(cnpjDigits);
+  const { data: cnpjRows } = await supabase.from('churches').select('id').eq('cnpj', cnpjFormatted).limit(1);
+  if (cnpjRows && cnpjRows.length > 0) throw AppError.conflict('Já existe uma igreja cadastrada com este CNPJ.');
+
+  const uf = String(church.state || '').trim().toUpperCase().slice(0, 2);
   const { data: createdChurch, error: churchError } = await supabase
     .from('churches')
     .insert({
       name: String(church.name).trim(),
       trade_name: church.tradeName ? String(church.tradeName).trim() : String(church.name).trim(),
-      city: church.city || null,
-      state: church.state || null,
+      cnpj: cnpjFormatted,
+      phone: formatPhone(church.phone),
+      whatsapp: church.whatsapp ? formatPhone(church.whatsapp) : null,
+      email: String(church.email).trim().toLowerCase(),
+      address: String(church.address).trim(),
+      city: church.city ? String(church.city).trim() : null,
+      state: uf || null,
       country: church.country || 'Brasil',
       slug,
     })
     .select('*')
     .single();
-  if (churchError) throw new Error(churchError.message);
+  if (churchError) {
+    if (churchError.code === '23505') throw AppError.conflict('Já existe uma igreja cadastrada com este CNPJ.');
+    throw new Error(churchError.message);
+  }
 
   // 3. Configuracoes / identidade visual
   await supabase.from('church_settings').insert({
@@ -241,8 +260,13 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
     .single();
   if (userError) throw new Error(userError.message);
 
-  // Invariante "1 user ⇒ 1 member" (F1.1): cria a pessoa correspondente ao admin.
-  await ensureMemberForUser(createdUser, createdChurch.id);
+  // Invariante "1 user ⇒ 1 member" (F1.1): cria a pessoa correspondente ao admin
+  // já com os dados essenciais coletados no cadastro (gênero, telefone, CPF).
+  await ensureMemberForUser(createdUser, createdChurch.id, {
+    gender: admin.gender,
+    phone: formatPhone(admin.phone),
+    cpf: formatCpf(admin.cpf),
+  });
 
   return res.status(201).json({ church: mapChurch(createdChurch), user: mapUser(createdUser) });
 }));

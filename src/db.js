@@ -1,6 +1,5 @@
 require('dotenv').config();
 
-const { randomUUID } = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const rawSupabaseSecretKey = (process.env.SUPABASE_SECRET_KEY || '').trim();
@@ -112,61 +111,13 @@ async function ensureDefaultChurch() {
   return created.id;
 }
 
-// Garante um admin padrão usando Supabase Auth (cria o auth user + o profile
-// vinculado via auth_user_id), de forma idempotente.
-async function ensureDefaultAdmin(defaultChurchId) {
-  const email = (process.env.DEFAULT_ADMIN_EMAIL || 'admin@igrejafamilia.com').trim().toLowerCase();
-  const password = process.env.DEFAULT_ADMIN_PASSWORD || 'admin123';
-
-  // 1. Garante o usuário no Supabase Auth.
-  let authUserId = null;
-  const { data: createdAuth, error: createAuthError } = await supabase.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-  });
-
-  if (createdAuth?.user) {
-    authUserId = createdAuth.user.id;
-  } else if (createAuthError && /already.*registered|exists/i.test(createAuthError.message || '')) {
-    // Já existe no auth: localiza o id paginando os usuários.
-    const { data: list } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-    authUserId = list?.users?.find((u) => (u.email || '').toLowerCase() === email)?.id || null;
-  } else if (createAuthError) {
-    throw new Error(`Falha ao criar admin no Supabase Auth: ${createAuthError.message}`);
-  }
-
-  // 2. Garante o profile (users) vinculado.
-  const { data: profile } = await supabase
-    .from('users')
-    .select('id,auth_user_id,church_id')
-    .eq('email', email)
-    .maybeSingle();
-
-  if (!profile) {
-    await supabase.from('users').insert({
-      id: randomUUID(),
-      name: 'Admin',
-      full_name: 'Admin',
-      email,
-      password_hash: 'supabase-auth',
-      role: 'admin',
-      auth_user_id: authUserId,
-      church_id: defaultChurchId,
-    });
-  } else if (!profile.auth_user_id && authUserId) {
-    await supabase.from('users').update({ auth_user_id: authUserId, church_id: profile.church_id || defaultChurchId }).eq('id', profile.id);
-  }
-}
-
 async function initConnection() {
   const { error } = await supabase.from('users').select('id').limit(1);
   if (error) {
     throw new Error(`Falha ao conectar no Supabase: ${error.message}`);
   }
 
-  const defaultChurchId = await ensureDefaultChurch();
-  await ensureDefaultAdmin(defaultChurchId);
+  await ensureDefaultChurch();
 }
 
 function getSupabase() {

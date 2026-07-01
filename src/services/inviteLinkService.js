@@ -5,6 +5,7 @@ const { AppError } = require('../lib/errors');
 const { USER_SELECT } = require('../lib/constants');
 const { mapInviteLink, mapUser } = require('../lib/mappers');
 const { normalizeBirthDate } = require('../lib/normalizers');
+const { isValidCpf, isValidPhone, formatCpf, formatPhone } = require('../lib/documents');
 const { isMissingRelation, migrationPending } = require('../lib/schemaGuard');
 const { createAuthUser, getChurchBundle } = require('./churchService');
 const { ensureMemberForUser } = require('./memberService');
@@ -142,12 +143,13 @@ async function registerViaInvite(token, { name, email, password, birthDate, gend
 
   // Campos essenciais exigidos no cadastro: garantem que a pessoa nasça com o
   // perfil preenchido (o restante fica opcional e aparece como "Não informado").
-  const normalizedGender = ['male', 'female', 'other'].includes(gender) ? gender : null;
+  const normalizedGender = ['male', 'female'].includes(gender) ? gender : null;
   if (!normalizedGender) throw AppError.badRequest('Genero invalido.');
-  const normalizedPhone = String(phone || '').trim();
-  if (!normalizedPhone) throw AppError.badRequest('Telefone e obrigatorio.');
-  const normalizedCpf = String(cpf || '').trim();
-  if (!normalizedCpf) throw AppError.badRequest('CPF e obrigatorio.');
+  // Guarda a forma canônica (máscara) de telefone e CPF, validando os dígitos.
+  if (!isValidPhone(phone)) throw AppError.badRequest('Telefone invalido.');
+  const normalizedPhone = formatPhone(phone);
+  if (!isValidCpf(cpf)) throw AppError.badRequest('CPF invalido.');
+  const normalizedCpf = formatCpf(cpf);
 
   const churchId = invite.church_id;
   const normalizedEmail = String(email).trim().toLowerCase();

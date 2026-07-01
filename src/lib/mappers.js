@@ -112,6 +112,9 @@ function mapMember(row) {
   return {
     id: row.id,
     userId: row.user_id || null,
+    // Papel/cargo do login vinculado (users.role). Preenchido pelo service
+    // quando há user_id; null para pessoas sem acesso ao app.
+    userRole: null,
     fullName: row.full_name,
     socialName: row.social_name || null,
     gender: row.gender || null,

@@ -1,4 +1,5 @@
 const { z, trimmedRequired, optionalString } = require('./common');
+const { isValidCpf, isValidPhone } = require('../lib/documents');
 
 // Geração de um link de convite (admin/pastor). Tudo opcional além do papel
 // padrão: o link nasce "membro", reutilizável, sem validade e sem limite.
@@ -18,9 +19,9 @@ const inviteRegisterSchema = z.object({
   email: trimmedRequired('Email e obrigatorio.'),
   password: trimmedRequired('Senha e obrigatoria.'),
   birthDate: trimmedRequired('Data de nascimento e obrigatoria.'),
-  gender: z.enum(['male', 'female', 'other'], { message: 'Genero e obrigatorio.' }),
-  phone: trimmedRequired('Telefone e obrigatorio.'),
-  cpf: trimmedRequired('CPF e obrigatorio.'),
+  gender: z.enum(['male', 'female'], { message: 'Genero e obrigatorio.' }),
+  phone: trimmedRequired('Telefone e obrigatorio.').refine(isValidPhone, 'Telefone invalido.'),
+  cpf: trimmedRequired('CPF e obrigatorio.').refine(isValidCpf, 'CPF invalido.'),
 }).passthrough();
 
 module.exports = { createInviteLinkSchema, inviteRegisterSchema };

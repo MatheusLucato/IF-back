@@ -5,6 +5,7 @@ const { AppError } = require('../lib/errors');
 const { validate } = require('../middleware/validate');
 const { updateSettingsSchema } = require('../schemas/settingsSchemas');
 const { mapUser } = require('../lib/mappers');
+const { onlyDigits, isValidCnpj, formatCnpj, formatPhone } = require('../lib/documents');
 const { getChurchBundle } = require('../services/churchService');
 const { getUserPermissions } = require('../services/permissionService');
 const { uploadAsset } = require('../services/storage');
@@ -41,10 +42,42 @@ router.patch('/settings', validate(updateSettingsSchema), asyncHandler(async (re
   for (const [key, column] of Object.entries(churchFields)) {
     if (Object.prototype.hasOwnProperty.call(body, key)) churchPatch[column] = body[key];
   }
+
+  // Normalização/validação de documentos e contatos (paridade com o onboarding):
+  // grava a forma canônica (máscara) e mantém o CNPJ único entre as igrejas.
+  if (Object.prototype.hasOwnProperty.call(churchPatch, 'cnpj')) {
+    const digits = onlyDigits(churchPatch.cnpj);
+    if (!digits) {
+      churchPatch.cnpj = null;
+    } else {
+      if (!isValidCnpj(digits)) throw AppError.badRequest('CNPJ inválido.');
+      const formatted = formatCnpj(digits);
+      const { data: dupe } = await supabase
+        .from('churches').select('id').eq('cnpj', formatted).neq('id', req.churchId).limit(1);
+      if (dupe && dupe.length > 0) throw AppError.conflict('Já existe uma igreja cadastrada com este CNPJ.');
+      churchPatch.cnpj = formatted;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(churchPatch, 'phone')) {
+    churchPatch.phone = churchPatch.phone ? formatPhone(churchPatch.phone) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(churchPatch, 'whatsapp')) {
+    churchPatch.whatsapp = churchPatch.whatsapp ? formatPhone(churchPatch.whatsapp) : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(churchPatch, 'email') && churchPatch.email) {
+    churchPatch.email = String(churchPatch.email).trim().toLowerCase();
+  }
+  if (Object.prototype.hasOwnProperty.call(churchPatch, 'state') && churchPatch.state) {
+    churchPatch.state = String(churchPatch.state).trim().toUpperCase().slice(0, 2);
+  }
+
   if (Object.keys(churchPatch).length > 0) {
     churchPatch.updated_at = new Date().toISOString();
     const { error } = await supabase.from('churches').update(churchPatch).eq('id', req.churchId);
-    if (error) throw new Error(error.message);
+    if (error) {
+      if (error.code === '23505') throw AppError.conflict('Já existe uma igreja cadastrada com este CNPJ.');
+      throw new Error(error.message);
+    }
   }
 
   const settingsPatch = {};
