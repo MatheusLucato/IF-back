@@ -11,6 +11,7 @@ const { mapChurch, mapUser } = require('../lib/mappers');
 const { slugify } = require('../lib/normalizers');
 const { getChurchBundle, createAuthUser } = require('../services/churchService');
 const { ensureMemberForUser } = require('../services/memberService');
+const { seedSystemRolesForChurch } = require('../services/permissionService');
 const { getInviteByToken, registerViaInvite } = require('../services/inviteLinkService');
 const { publicRegistrationSchema } = require('../schemas/eventSchemas');
 const eventService = require('../services/eventService');
@@ -206,20 +207,36 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
     color_secondary: identity?.colorSecondary || undefined,
   });
 
-  // 4. Profile admin vinculado
+  // 4. Papéis-sistema (RBAC) da nova igreja. Sem isso, a tela de Papéis nasce
+  // vazia e o dono não fica vinculado ao papel de Administrador. Tolerante a
+  // falhas: nunca deve travar a criação da conta (cai no atalho por papel legado).
+  let adminRoleId = null;
+  try {
+    const roleIdBySlug = await seedSystemRolesForChurch(createdChurch.id);
+    adminRoleId = roleIdBySlug ? roleIdBySlug.get('admin') || null : null;
+  } catch (err) {
+    console.warn('[onboarding] falha ao semear papéis-sistema:', err.message);
+  }
+
+  // 5. Profile admin vinculado (papel legado 'admin' + role_id do papel-sistema).
   const safeName = String(admin.name).trim();
+  const userPayload = {
+    id: randomUUID(),
+    name: safeName,
+    full_name: safeName,
+    email,
+    password_hash: 'supabase-auth',
+    role: 'admin',
+    auth_user_id: authUser.id,
+    church_id: createdChurch.id,
+  };
+  // Só envia role_id quando o RBAC está disponível (evita erro de coluna
+  // inexistente quando a migração 0002 ainda não foi aplicada).
+  if (adminRoleId) userPayload.role_id = adminRoleId;
+
   const { data: createdUser, error: userError } = await supabase
     .from('users')
-    .insert({
-      id: randomUUID(),
-      name: safeName,
-      full_name: safeName,
-      email,
-      password_hash: 'supabase-auth',
-      role: 'admin',
-      auth_user_id: authUser.id,
-      church_id: createdChurch.id,
-    })
+    .insert(userPayload)
     .select(USER_SELECT)
     .single();
   if (userError) throw new Error(userError.message);

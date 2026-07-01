@@ -66,6 +66,71 @@ async function userHasPermission(user, permissionKey) {
   return permissions.has(permissionKey);
 }
 
+// --- Seed dos papéis-sistema por igreja --------------------------------------
+
+// Papéis-sistema criados em toda igreja nova. Espelha a seção 5 da migração
+// 0002_rbac_roles_permissions.sql (nome/slug/descrição). As permissões vêm de
+// DEFAULT_ROLE_PERMISSIONS (fonte única) via defaultPermissionsForRole.
+const SYSTEM_ROLE_DEFS = [
+  { name: 'Administrador', slug: 'admin', description: 'Acesso total à igreja.' },
+  { name: 'Pastor', slug: 'pastor', description: 'Acesso total à igreja.' },
+  { name: 'Líder', slug: 'lider', description: 'Gerencia ministérios, escalas e repertório.' },
+  { name: 'Membro', slug: 'membro', description: 'Acesso básico de visualização.' },
+];
+
+// Semeia os 4 papéis-sistema + suas permissões numa igreja recém-criada e
+// devolve o mapa slug→id. Idempotente (ON CONFLICT DO NOTHING). Tolera o schema
+// de RBAC ausente (migração 0002 não aplicada): retorna null sem quebrar o
+// onboarding — o enforcement cai no atalho por papel legado.
+async function seedSystemRolesForChurch(churchId) {
+  const roleRows = SYSTEM_ROLE_DEFS.map((r) => ({
+    church_id: churchId,
+    name: r.name,
+    slug: r.slug,
+    description: r.description,
+    is_system: true,
+  }));
+
+  const { error: rolesError } = await supabase
+    .from('roles')
+    .upsert(roleRows, { onConflict: 'church_id,slug', ignoreDuplicates: true });
+
+  if (isMissingRbacSchema(rolesError)) return null;
+  if (rolesError) throw new Error(rolesError.message);
+
+  // Recarrega os ids: o upsert com ignoreDuplicates não retorna linhas já existentes.
+  const { data: seeded, error: selectError } = await supabase
+    .from('roles')
+    .select('id,slug')
+    .eq('church_id', churchId)
+    .in('slug', SYSTEM_ROLE_DEFS.map((r) => r.slug));
+
+  if (isMissingRbacSchema(selectError)) return null;
+  if (selectError) throw new Error(selectError.message);
+
+  const idBySlug = new Map((seeded || []).map((r) => [r.slug, r.id]));
+
+  // Concede as permissões padrão de cada papel (idempotente).
+  const permissionRows = [];
+  for (const def of SYSTEM_ROLE_DEFS) {
+    const roleId = idBySlug.get(def.slug);
+    if (!roleId) continue;
+    for (const key of defaultPermissionsForRole(def.slug)) {
+      permissionRows.push({ role_id: roleId, permission_key: key, church_id: churchId });
+    }
+  }
+
+  if (permissionRows.length > 0) {
+    const { error: permError } = await supabase
+      .from('role_permissions')
+      .upsert(permissionRows, { onConflict: 'role_id,permission_key', ignoreDuplicates: true });
+    if (isMissingRbacSchema(permError)) return null;
+    if (permError) throw new Error(permError.message);
+  }
+
+  return idBySlug;
+}
+
 // --- Gestão de papéis (CRUD) -------------------------------------------------
 
 // Quando as tabelas de RBAC não existem, a gestão de papéis exige a migração.
@@ -266,6 +331,7 @@ module.exports = {
   userHasPermission,
   loadRolePermissionKeys,
   isMissingRbacSchema,
+  seedSystemRolesForChurch,
   listRoles,
   createRole,
   updateRole,
