@@ -210,20 +210,6 @@ async function getMemberMinistries(userId, churchId) {
   }
 }
 
-async function createMember(churchId, input) {
-  const payload = { ...buildMemberDbPayload(input), church_id: churchId };
-
-  const { data, error } = await supabase
-    .from('members')
-    .insert(payload)
-    .select(MEMBER_SELECT)
-    .single();
-
-  if (isMissingRelation(error)) throw migrationPending(MEMBERS_MIGRATION);
-  if (error) throw new Error(error.message);
-  return mapMember(data);
-}
-
 async function updateMember(memberId, churchId, input) {
   const payload = buildMemberDbPayload(input);
   if (Object.keys(payload).length === 0) {
@@ -378,7 +364,6 @@ module.exports = {
   getMemberRow,
   getMemberDetail,
   getMemberFamilies,
-  createMember,
   updateMember,
   deleteMember,
   listBirthdays,

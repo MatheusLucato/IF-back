@@ -7,7 +7,6 @@ const { upload } = require('../middleware/upload');
 const { uploadAsset } = require('../services/storage');
 const { recordAudit, AUDIT_ACTIONS, AUDIT_ENTITIES } = require('../services/auditService');
 const {
-  createMemberSchema,
   updateMemberSchema,
   listMembersQuerySchema,
   birthdaysQuerySchema,
@@ -19,7 +18,6 @@ const {
   listMembers,
   getMemberDetail,
   getMemberRow,
-  createMember,
   updateMember,
   deleteMember,
   listBirthdays,
@@ -69,22 +67,9 @@ router.get(
   }),
 );
 
-// Criar pessoa (F1.1).
-router.post(
-  '/members',
-  requirePermission('membros.write'),
-  validate(createMemberSchema),
-  asyncHandler(async (req, res) => {
-    const member = await createMember(req.churchId, req.body);
-    await recordAudit(req, {
-      action: AUDIT_ACTIONS.MEMBER_CREATED,
-      entity: AUDIT_ENTITIES.MEMBER,
-      entityId: member.id,
-      after: { fullName: member.fullName, email: member.email, membershipStatus: member.membershipStatus },
-    });
-    return res.status(201).json({ member });
-  }),
-);
+// Nota: não há criação manual de pessoas. O cadastro acontece exclusivamente
+// pelo fluxo de convite (POST /api/public/invites/:token/register), que cria o
+// vínculo membro↔usuário. Ver inviteLinkService.registerViaInvite.
 
 // Atualizar pessoa (F1.3).
 router.patch(

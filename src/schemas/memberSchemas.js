@@ -54,13 +54,8 @@ const memberFields = {
   isActive: z.boolean().optional(),
 };
 
-// POST /members — fullName é obrigatório na criação.
-const createMemberSchema = z.object({
-  ...memberFields,
-  fullName: trimmedRequired('O nome e obrigatorio.'),
-});
-
-// PATCH /members/:id — atualização parcial.
+// PATCH /members/:id — atualização parcial. (Não há criação manual de pessoas:
+// o cadastro ocorre apenas via convite — ver inviteLinkSchemas/registerViaInvite.)
 const updateMemberSchema = z.object(memberFields);
 
 // GET /members — busca, filtros e paginação (query string → coerção).
@@ -133,7 +128,6 @@ module.exports = {
   FAMILY_ROLES,
   MEMBER_EVENT_TYPES,
   INVITE_ROLES,
-  createMemberSchema,
   updateMemberSchema,
   listMembersQuerySchema,
   birthdaysQuerySchema,
