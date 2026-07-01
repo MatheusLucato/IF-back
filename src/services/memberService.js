@@ -291,7 +291,7 @@ async function listBirthdays(churchId, month) {
 // (register/onboarding). BEST-EFFORT: nunca quebra o cadastro — se a migração
 // 0004 ainda não rodou (ou qualquer erro), apenas não cria o member.
 // Recebe a linha BRUTA do user (snake_case) recém-criada.
-async function ensureMemberForUser(userRow, churchId) {
+async function ensureMemberForUser(userRow, churchId, extra = {}) {
   if (!userRow || !userRow.id || !churchId) return null;
   try {
     const { data: existing } = await supabase
@@ -300,6 +300,12 @@ async function ensureMemberForUser(userRow, churchId) {
       .eq('user_id', userRow.id)
       .maybeSingle();
     if (existing) return existing.id;
+
+    const text = (v) => {
+      if (v == null) return null;
+      const s = String(v).trim();
+      return s || null;
+    };
 
     const { data, error } = await supabase
       .from('members')
@@ -310,6 +316,9 @@ async function ensureMemberForUser(userRow, churchId) {
         email: userRow.email || null,
         birth_date: userRow.birth_date || null,
         photo_url: userRow.profile_picture || null,
+        gender: text(extra.gender),
+        phone: text(extra.phone),
+        cpf: text(extra.cpf),
         membership_status: 'member',
       })
       .select('id')
