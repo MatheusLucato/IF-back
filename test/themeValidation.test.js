@@ -38,21 +38,21 @@ test('a sugestao devolvida realmente passa no contraste', () => {
   assert.ok(contrastRatio(issue.suggestion, '#ffffff') >= 4.5);
 });
 
-// --- Enforcement via schema (paridade com o front) ---
+// --- Enforcement via schema: agora valida o ID do tema (Color Presets) ---
 
-test('updateSettingsSchema rejeita tema inacessivel com issues por campo', () => {
-  const r = updateSettingsSchema.safeParse({ colorButton: '#ffffff', colorSecondary: '#ffffff' });
+test('updateSettingsSchema rejeita tema desconhecido', () => {
+  const r = updateSettingsSchema.safeParse({ theme: 'nao_existe' });
   assert.equal(r.success, false);
   const paths = r.error.issues.map((i) => i.path.join('.'));
-  assert.ok(paths.includes('colorPrimary') || paths.includes('colorSecondary'));
+  assert.ok(paths.includes('theme'));
 });
 
-test('updateSettingsSchema aceita tema acessivel', () => {
-  const r = updateSettingsSchema.safeParse({ colorButton: '#0f766e', colorPrimary: '#0f766e', colorSecondary: '#2563eb' });
+test('updateSettingsSchema aceita tema conhecido', () => {
+  const r = updateSettingsSchema.safeParse({ theme: 'teal_edifico' });
   assert.equal(r.success, true);
 });
 
-test('updateSettingsSchema ignora validacao de tema quando o PATCH nao mexe nas cores', () => {
+test('updateSettingsSchema ignora validacao de tema quando o PATCH nao mexe no tema', () => {
   const r = updateSettingsSchema.safeParse({ name: 'Igreja Teste' });
   assert.equal(r.success, true);
 });

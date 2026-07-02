@@ -3,15 +3,24 @@ const { getSupabase } = require('../db');
 const { asyncHandler } = require('../lib/asyncHandler');
 const { AppError } = require('../lib/errors');
 const { validate } = require('../middleware/validate');
+const { requirePermission } = require('../middleware/requirePermission');
+const { isSuperRole } = require('../lib/permissions');
 const {
   updateUserProfileSchema,
   updateUserRoleSchema,
   addUnavailableDateSchema,
+  updateUnavailableDateSchema,
 } = require('../schemas/userSchemas');
 const { USER_SELECT } = require('../lib/constants');
 const { mapUser } = require('../lib/mappers');
 const { getMonthAndDay, normalizeThemePreference } = require('../lib/normalizers');
 const { getUserById } = require('../services/userService');
+const {
+  listUnavailableDates,
+  addUnavailableDate,
+  updateUnavailableDate,
+  deleteUnavailableDate,
+} = require('../services/unavailabilityService');
 const { uploadAsset } = require('../services/storage');
 const { upload } = require('../middleware/upload');
 const { recordAudit, AUDIT_ACTIONS, AUDIT_ENTITIES } = require('../services/auditService');
@@ -294,66 +303,79 @@ router.delete('/users/:id', asyncHandler(async (req, res) => {
   return res.status(200).json({ message: 'Usuario e todos os dados relacionados foram excluidos com sucesso.' });
 }));
 
-// --- INDISPONIBILIDADES DE ESCALA ---
+// --- INDISPONIBILIDADES DE ESCALA (módulo próprio, RBAC `indisponibilidade.*`) ---
+//
+// Autoatendimento: cada usuário gerencia as PRÓPRIAS datas. Ler/editar/excluir
+// registros de terceiros é permitido apenas a papéis "super" (admin/pastor),
+// preservando a capacidade latente do administrador. A regra é consumida sem
+// alterações pela geração de escalas (scheduleService.checkScheduleConflicts).
 
-// Ler datas indisponíveis (do próprio usuário ou de alguém se for líder/admin)
-router.get('/users/:userId/unavailable-dates', asyncHandler(async (req, res) => {
-  const { userId } = req.params;
-
-  const { data, error } = await supabase
-    .from('user_unavailable_dates')
-    .select('*')
-    .eq('church_id', req.churchId)
-    .eq('user_id', userId)
-    .order('date', { ascending: true });
-
-  if (error) throw new Error(error.message);
-
-  return res.status(200).json(data);
-}));
-
-// Adicionar data indisponível
-router.post('/users/:userId/unavailable-dates', validate(addUnavailableDateSchema), asyncHandler(async (req, res) => {
-  const { userId } = req.params;
-  const { date, reason } = req.body;
-
-  // Apenas o próprio usuário, ou um líder/admin, pode marcar indisponibilidade.
-  if (req.user.id !== userId && req.user.role === 'membro') {
-    throw AppError.forbidden('Nao autorizado.');
+// Garante que o alvo é o próprio usuário — ou que o solicitante é papel super.
+function assertCanManageUnavailability(req, targetUserId) {
+  if (req.user.id !== targetUserId && !isSuperRole(req.user.role)) {
+    throw AppError.forbidden('Voce so pode gerenciar as proprias indisponibilidades.');
   }
+}
 
-  const { data, error } = await supabase
-    .from('user_unavailable_dates')
-    .insert([{ user_id: userId, date, reason, church_id: req.churchId }])
-    .select()
-    .single();
+// Ler datas indisponíveis (do próprio usuário; admin/pastor podem ver de outros).
+router.get(
+  '/users/:userId/unavailable-dates',
+  requirePermission('indisponibilidade.read'),
+  asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    assertCanManageUnavailability(req, userId);
+    const data = await listUnavailableDates(req.churchId, userId);
+    return res.status(200).json(data);
+  }),
+);
 
-  if (error) {
-    if (error.code === '23505') {
-      throw AppError.conflict('Data ja esta marcada como indisponivel.');
-    }
-    throw new Error(error.message);
-  }
+// Adicionar data indisponível.
+router.post(
+  '/users/:userId/unavailable-dates',
+  requirePermission('indisponibilidade.write'),
+  validate(addUnavailableDateSchema),
+  asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    assertCanManageUnavailability(req, userId);
+    const created = await addUnavailableDate({
+      churchId: req.churchId,
+      userId,
+      date: req.body.date,
+      reason: req.body.reason,
+    });
+    return res.status(201).json(created);
+  }),
+);
 
-  return res.status(201).json(data);
-}));
+// Editar data e/ou motivo de uma indisponibilidade existente.
+router.patch(
+  '/users/:userId/unavailable-dates/:id',
+  requirePermission('indisponibilidade.write'),
+  validate(updateUnavailableDateSchema),
+  asyncHandler(async (req, res) => {
+    const { userId, id } = req.params;
+    assertCanManageUnavailability(req, userId);
+    const updated = await updateUnavailableDate({
+      churchId: req.churchId,
+      userId,
+      id,
+      date: req.body.date,
+      reason: req.body.reason,
+    });
+    return res.status(200).json(updated);
+  }),
+);
 
-// Remover data indisponível
-router.delete('/users/:userId/unavailable-dates/:id', asyncHandler(async (req, res) => {
-  const { userId, id } = req.params;
-
-  if (req.user.id !== userId && req.user.role === 'membro') {
-    throw AppError.forbidden('Nao autorizado.');
-  }
-
-  const { error } = await supabase
-    .from('user_unavailable_dates')
-    .delete()
-    .match({ id, user_id: userId, church_id: req.churchId });
-
-  if (error) throw new Error(error.message);
-
-  return res.status(204).send();
-}));
+// Remover data indisponível.
+router.delete(
+  '/users/:userId/unavailable-dates/:id',
+  requirePermission('indisponibilidade.delete'),
+  asyncHandler(async (req, res) => {
+    const { userId, id } = req.params;
+    assertCanManageUnavailability(req, userId);
+    await deleteUnavailableDate({ churchId: req.churchId, userId, id });
+    return res.status(204).send();
+  }),
+);
 
 module.exports = router;

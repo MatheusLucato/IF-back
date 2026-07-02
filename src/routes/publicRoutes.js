@@ -11,6 +11,7 @@ const { mapChurch, mapUser } = require('../lib/mappers');
 const { slugify } = require('../lib/normalizers');
 const { onlyDigits, isValidCnpj, formatCnpj, formatPhone, formatCpf } = require('../lib/documents');
 const { getChurchBundle, createAuthUser } = require('../services/churchService');
+const { isValidThemeId, resolveThemeColors, DEFAULT_THEME_ID } = require('../lib/themePresets');
 const { ensureMemberForUser } = require('../services/memberService');
 const { seedSystemRolesForChurch } = require('../services/permissionService');
 const { getInviteByToken, registerViaInvite } = require('../services/inviteLinkService');
@@ -218,12 +219,20 @@ router.post('/api/onboarding', validate(onboardingSchema), asyncHandler(async (r
     throw new Error(churchError.message);
   }
 
-  // 3. Configuracoes / identidade visual
+  // 3. Configuracoes / identidade visual. A igreja escolhe um tema pré-definido
+  // (Color Presets); guardamos o id como fonte da verdade e denormalizamos as
+  // cores em color_* para leitores diretos/legados. Ver src/lib/themePresets.js.
+  const themeId = isValidThemeId(identity?.theme) ? identity.theme : DEFAULT_THEME_ID;
+  const themeColors = resolveThemeColors(themeId);
   await supabase.from('church_settings').insert({
     church_id: createdChurch.id,
     logo_url: identity?.logoUrl || null,
-    color_primary: identity?.colorPrimary || undefined,
-    color_secondary: identity?.colorSecondary || undefined,
+    theme: themeId,
+    color_primary: themeColors.colorPrimary,
+    color_secondary: themeColors.colorSecondary,
+    color_accent: themeColors.colorAccent,
+    color_button: themeColors.colorButton,
+    color_link: themeColors.colorLink,
   });
 
   // 4. Papéis-sistema (RBAC) da nova igreja. Sem isso, a tela de Papéis nasce

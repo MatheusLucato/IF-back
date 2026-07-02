@@ -1,5 +1,5 @@
 const { z, trimmedRequired, optionalString } = require('./common');
-const { validateThemeColors } = require('../lib/themeValidation');
+const { isValidThemeId } = require('../lib/themePresets');
 const { isValidCpf, isValidCnpj, isValidPhone } = require('../lib/documents');
 
 const isNonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
@@ -32,27 +32,17 @@ const onboardingSchema = z.object({
     state: trimmedRequired('O estado (UF) e obrigatorio.'),
     country: optionalString,
   }).passthrough(),
+  // Identidade visual = tema pre-definido (Color Presets). A igreja envia so o id;
+  // o handler deriva as cores. `theme` opcional: ausente => tema padrao.
   identity: z.object({
     logoUrl: optionalString,
-    colorPrimary: optionalString,
-    colorSecondary: optionalString,
+    theme: optionalString,
   }).passthrough().optional(),
 }).superRefine((data, ctx) => {
-  // Enforcement de acessibilidade do tema quando ambas as cores sao informadas.
-  const primary = data.identity && data.identity.colorPrimary;
-  const secondary = data.identity && data.identity.colorSecondary;
-  if (!isNonEmpty(primary) || !isNonEmpty(secondary)) return;
-
-  const result = validateThemeColors({ primary, secondary });
-  if (result.ok) return;
-  const pathByField = { primary: 'colorPrimary', secondary: 'colorSecondary', pair: 'colorSecondary' };
-  result.issues.forEach((i) => {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['identity', pathByField[i.field] || 'colorPrimary'],
-      message: i.suggestion ? `${i.message} Sugestao: ${String(i.suggestion).toUpperCase()}.` : i.message,
-    });
-  });
+  const theme = data.identity && data.identity.theme;
+  if (isNonEmpty(theme) && !isValidThemeId(theme)) {
+    ctx.addIssue({ code: 'custom', path: ['identity', 'theme'], message: 'Tema invalido.' });
+  }
 });
 
 module.exports = { onboardingSchema };

@@ -19,8 +19,16 @@ const addUnavailableDateSchema = z.object({
   reason: optionalString,
 });
 
+// PATCH /users/:userId/unavailable-dates/:id — edita data e/ou motivo.
+// Ambos opcionais (patch parcial); o service aplica só o que vier.
+const updateUnavailableDateSchema = z.object({
+  date: optionalString,
+  reason: optionalString,
+});
+
 module.exports = {
   updateUserProfileSchema,
   updateUserRoleSchema,
   addUnavailableDateSchema,
+  updateUnavailableDateSchema,
 };

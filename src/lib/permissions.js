@@ -34,6 +34,9 @@ const MODULES = [
   { key: 'configuracoes', label: 'Configurações', actions: ['read', 'write'], status: 'active' },
   { key: 'papeis', label: 'Papéis & Permissões', actions: ['read', 'write'], status: 'active' },
   { key: 'membros', label: 'Membros (Pessoas)', actions: ['read', 'write', 'delete'], status: 'active' },
+  // Indisponibilidades para escalas (0046): autoatendimento — cada usuário
+  // gerencia as próprias datas. `read/write/delete` concedidas a todos os papéis.
+  { key: 'indisponibilidade', label: 'Indisponibilidades', actions: ['read', 'write', 'delete'], status: 'active' },
   // Convites por link (0042): quem pode gerar/listar/revogar links de ingresso.
   { key: 'convites', label: 'Convites', actions: ['read', 'write'], status: 'active' },
   { key: 'secretaria', label: 'Secretaria', actions: ['read', 'write'], status: 'active' },
@@ -86,6 +89,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'escalas.read', 'escalas.write',
     'repertorio.read', 'repertorio.write',
     'ministros.read',
+    // Indisponibilidades (autoatendimento das próprias datas).
+    'indisponibilidade.read', 'indisponibilidade.write', 'indisponibilidade.delete',
     // Módulos de comunidade (Onda 3): líderes operam eventos, ensino e comunicação.
     'eventos.read', 'eventos.write',
     'ensino.read', 'ensino.write',
@@ -100,6 +105,8 @@ const DEFAULT_ROLE_PERMISSIONS = {
     'ministros.read',
     'eventos.read',
     'comunicacao.read',
+    // Indisponibilidades: o membro gerencia as próprias datas de escala.
+    'indisponibilidade.read', 'indisponibilidade.write', 'indisponibilidade.delete',
   ],
 };
 

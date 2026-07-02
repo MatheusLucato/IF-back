@@ -6,6 +6,7 @@ const {
   normalizeScheduleSong,
   sanitizeMinistryTeams,
 } = require('./normalizers');
+const { isValidThemeId, resolveThemeColors } = require('./themePresets');
 
 function isGhostUser(row) {
   return row && row.role === 'admin';
@@ -231,16 +232,23 @@ function mapInviteLink(row) {
 
 function mapChurchSettings(row) {
   if (!row) return null;
+  // Tema pré-definido é a fonte da verdade da identidade visual: quando presente,
+  // as cores vêm do catálogo (themePresets), não das colunas color_* (que podem
+  // estar defasadas se um preset for reeditado). Igreja sem tema (dados antigos)
+  // cai nas cores gravadas — preserva o comportamento anterior.
+  const themeId = isValidThemeId(row.theme) ? row.theme : null;
+  const resolved = themeId ? resolveThemeColors(themeId) : null;
   return {
     logoUrl: row.logo_url || null,
     logoCompactUrl: row.logo_compact_url || null,
     faviconUrl: row.favicon_url || null,
     coverUrl: row.cover_url || null,
-    colorPrimary: row.color_primary,
-    colorSecondary: row.color_secondary,
-    colorAccent: row.color_accent,
-    colorButton: row.color_button,
-    colorLink: row.color_link,
+    theme: themeId,
+    colorPrimary: resolved ? resolved.colorPrimary : row.color_primary,
+    colorSecondary: resolved ? resolved.colorSecondary : row.color_secondary,
+    colorAccent: resolved ? resolved.colorAccent : row.color_accent,
+    colorButton: resolved ? resolved.colorButton : row.color_button,
+    colorLink: resolved ? resolved.colorLink : row.color_link,
     language: row.language,
     timezone: row.timezone,
     dateFormat: row.date_format,

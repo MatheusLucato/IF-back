@@ -7,6 +7,7 @@ const { updateSettingsSchema } = require('../schemas/settingsSchemas');
 const { mapUser } = require('../lib/mappers');
 const { onlyDigits, isValidCnpj, formatCnpj, formatPhone } = require('../lib/documents');
 const { getChurchBundle } = require('../services/churchService');
+const { isValidThemeId, resolveThemeColors } = require('../lib/themePresets');
 const { getUserPermissions } = require('../services/permissionService');
 const { uploadAsset } = require('../services/storage');
 const { upload } = require('../middleware/upload');
@@ -90,6 +91,21 @@ router.patch('/settings', validate(updateSettingsSchema), asyncHandler(async (re
   for (const [key, column] of Object.entries(settingsFields)) {
     if (Object.prototype.hasOwnProperty.call(body, key)) settingsPatch[column] = body[key];
   }
+
+  // Tema pré-definido (Color Presets): a igreja escolhe só o id; o back deriva e
+  // persiste as cores. `theme` é a fonte da verdade; color_* fica denormalizado
+  // para leitores diretos/legados. Vem por último para vencer cores avulsas.
+  // Ver IF-front/src/lib/theme-presets.ts.
+  if (isValidThemeId(body.theme)) {
+    const c = resolveThemeColors(body.theme);
+    settingsPatch.theme = body.theme;
+    settingsPatch.color_primary = c.colorPrimary;
+    settingsPatch.color_secondary = c.colorSecondary;
+    settingsPatch.color_accent = c.colorAccent;
+    settingsPatch.color_button = c.colorButton;
+    settingsPatch.color_link = c.colorLink;
+  }
+
   if (Object.keys(settingsPatch).length > 0) {
     settingsPatch.updated_at = new Date().toISOString();
     const { error } = await supabase.from('church_settings').update(settingsPatch).eq('church_id', req.churchId);

@@ -6,6 +6,7 @@ const { validate } = require('../middleware/validate');
 const { publicDonationSchema } = require('../schemas/givingSchemas');
 const giving = require('../services/givingService');
 const gateway = require('../lib/paymentGateway');
+const { isValidThemeId, getThemePreset } = require('../lib/themePresets');
 
 const router = express.Router();
 const supabase = getSupabase();
@@ -27,13 +28,17 @@ router.get('/api/public/churches/:slug/giving', asyncHandler(async (req, res) =>
   const church = await resolveChurchBySlug(req.params.slug);
   if (!church) throw AppError.notFound('Igreja não encontrada.');
 
-  // Branding (logo/cores) reaproveita church_settings.
+  // Branding (logo/cores) reaproveita church_settings. A cor primária vem do tema
+  // pré-definido quando houver um (fonte da verdade); senão, da coluna legada.
   const { data: settings } = await supabase
-    .from('church_settings').select('logo_url,color_primary').eq('church_id', church.id).maybeSingle();
+    .from('church_settings').select('logo_url,color_primary,theme').eq('church_id', church.id).maybeSingle();
+  const colorPrimary = isValidThemeId(settings?.theme)
+    ? getThemePreset(settings.theme).primary
+    : (settings?.color_primary || null);
 
   const funds = await giving.listFunds(church.id, { activeOnly: true });
   return res.json({
-    church: { name: church.trade_name || church.name, slug: church.slug, logoUrl: settings?.logo_url || null, colorPrimary: settings?.color_primary || null },
+    church: { name: church.trade_name || church.name, slug: church.slug, logoUrl: settings?.logo_url || null, colorPrimary },
     funds: funds.map((f) => ({ id: f.id, name: f.name, slug: f.slug, description: f.description, goalCents: f.goalCents, raisedCents: f.raisedCents })),
     gatewayConfigured: gateway.isConfigured(),
   });

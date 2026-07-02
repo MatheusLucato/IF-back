@@ -1,20 +1,18 @@
 const { z, optionalString } = require('./common');
-const { validateThemeColors, PRIMARY_MIN_ON_BG, SECONDARY_MIN_ON_BG } = require('../lib/themeValidation');
-const { isValidHex, normalizeHex, contrastRatio } = require('../lib/color');
+const { isValidThemeId } = require('../lib/themePresets');
 const { isValidCnpj, isValidPhone } = require('../lib/documents');
 
 const isNonEmpty = (v) => typeof v === 'string' && v.trim() !== '';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const WHITE = '#ffffff';
 
 // Atualizacao das configuracoes da igreja (dados cadastrais + identidade visual).
 // Todos os campos sao opcionais (PATCH parcial). `.passthrough()` preserva o
 // objeto `settings` (jsonb arbitrario) e qualquer extensao futura sem perder
 // dados; o handler so persiste as chaves que conhece.
 //
-// O `.superRefine` faz o ENFORCEMENT de acessibilidade do tema (paridade com
-// IF-front/src/lib/theme-validation.ts): o servidor nunca persiste um par de
-// cores que deixaria a UI ilegivel, mesmo fora da tela de configuracoes.
+// Identidade visual agora e um TEMA pre-definido (Color Presets): o cliente envia
+// so `theme` (o id) e o handler deriva/persiste as cores. As colunas color_* ainda
+// sao aceitas (denormalizacao/legado), mas nao sao mais escolhidas livremente.
 const updateSettingsSchema = z.object({
   name: optionalString,
   tradeName: optionalString,
@@ -31,6 +29,7 @@ const updateSettingsSchema = z.object({
   logoCompactUrl: optionalString,
   faviconUrl: optionalString,
   coverUrl: optionalString,
+  theme: optionalString,
   colorPrimary: optionalString,
   colorSecondary: optionalString,
   colorAccent: optionalString,
@@ -61,41 +60,11 @@ const updateSettingsSchema = z.object({
     ctx.addIssue({ code: 'custom', path: ['whatsapp'], message: 'WhatsApp invalido.' });
   }
 
-  // colorPrimary e a fonte da verdade no modelo de 2 cores; colorButton (legado) so
-  // entra como fallback. Alinhado com IF-front/src/lib/theme.ts.
-  const primary = isNonEmpty(data.colorPrimary) ? data.colorPrimary : data.colorButton;
-  const hasPrimary = isNonEmpty(primary);
-  const hasSecondary = isNonEmpty(data.colorSecondary);
-  if (!hasPrimary && !hasSecondary) return; // PATCH nao mexe no tema
-
-  const addThemeIssue = (path, message, suggestion) => {
-    ctx.addIssue({
-      code: 'custom',
-      path: [path],
-      message: suggestion ? `${message} Sugestao: ${String(suggestion).toUpperCase()}.` : message,
-    });
-  };
-
-  // Caso real (tela de configuracoes / onboarding): as duas cores vem juntas.
-  if (hasPrimary && hasSecondary) {
-    const result = validateThemeColors({ primary, secondary: data.colorSecondary });
-    if (!result.ok) {
-      const pathByField = { primary: 'colorPrimary', secondary: 'colorSecondary', pair: 'colorSecondary' };
-      result.issues.forEach((i) => addThemeIssue(pathByField[i.field] || 'colorPrimary', i.message, i.suggestion));
-    }
-    return;
-  }
-
-  // PATCH com apenas uma cor: valida hex + visibilidade no fundo (sem a regra de par).
-  const single = hasPrimary
-    ? { value: primary, path: 'colorPrimary', min: PRIMARY_MIN_ON_BG }
-    : { value: data.colorSecondary, path: 'colorSecondary', min: SECONDARY_MIN_ON_BG };
-  if (!isValidHex(single.value)) {
-    addThemeIssue(single.path, 'A cor precisa estar no formato hexadecimal (ex.: #0F766E).');
-    return;
-  }
-  if (contrastRatio(normalizeHex(single.value), WHITE) < single.min) {
-    addThemeIssue(single.path, 'A cor esta clara demais e ficaria quase invisivel sobre o fundo. Escolha um tom mais escuro.');
+  // Tema pre-definido: quando informado, precisa ser um id conhecido do catalogo
+  // (IF-back/src/lib/themePresets.js). As cores em si sao curadas e acessiveis por
+  // construcao, entao nao ha mais validacao de contraste de hex avulso.
+  if (isNonEmpty(data.theme) && !isValidThemeId(data.theme)) {
+    ctx.addIssue({ code: 'custom', path: ['theme'], message: 'Tema invalido.' });
   }
 });
 
